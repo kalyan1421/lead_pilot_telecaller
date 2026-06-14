@@ -9,6 +9,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_theme.dart';
 import '../widgets/leadpilot_widgets.dart';
+import '../widgets/schedule_call_sheet.dart';
 
 class FollowUpsScreen extends ConsumerStatefulWidget {
   const FollowUpsScreen({super.key});
@@ -33,6 +34,71 @@ class _FollowUpsScreenState extends ConsumerState<FollowUpsScreen>
     super.dispose();
   }
 
+  /// Pick a lead, then open the schedule sheet to create a follow-up reminder.
+  Future<void> _addFollowUp() async {
+    final leads = ref.read(leadsProvider);
+    if (leads.isEmpty) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(content: Text('Add a lead first to schedule a follow-up.')),
+        );
+      return;
+    }
+    final lead = await showModalBottomSheet<Lead>(
+      context: context,
+      backgroundColor: AppColors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.fromLTRB(0, 14, 0, 12),
+                decoration: BoxDecoration(
+                  color: AppColors.westar,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text('Choose a lead',
+                  style: AppText.display20.copyWith(fontSize: 18)),
+            ),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: leads.length,
+                itemBuilder: (_, i) {
+                  final l = leads[i];
+                  return ListTile(
+                    leading: ScoreRing(score: l.score, size: 38),
+                    title: Text(l.name,
+                        style:
+                            AppText.body14.copyWith(fontWeight: FontWeight.w700)),
+                    subtitle: Text(l.phone, style: AppText.mono(size: 12)),
+                    onTap: () => Navigator.of(sheetContext).pop(l),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (lead != null && mounted) {
+      await ScheduleCallSheet.show(context, lead);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tasks = ref.watch(followUpsProvider);
@@ -48,42 +114,31 @@ class _FollowUpsScreenState extends ConsumerState<FollowUpsScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // ── Header ─────────────────────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Follow-ups',
-                          style: AppText.display20.copyWith(fontSize: 22),
-                        ),
-                        RichText(
-                          text: TextSpan(
-                            style: AppText.body13.copyWith(color: AppColors.schooner),
-                            children: [
-                              TextSpan(
-                                text: '${overdue.length} overdue',
-                                style: TextStyle(
-                                  color: overdue.isNotEmpty
-                                      ? AppColors.alizarin
-                                      : AppColors.schooner,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              TextSpan(text: ' · ${pending.length} due today'),
-                            ],
-                          ),
-                        ),
-                      ],
+            LpTabHeader(
+              title: 'Follow-ups',
+              subtitleWidget: RichText(
+                text: TextSpan(
+                  style: AppText.body13.copyWith(color: AppColors.schooner),
+                  children: [
+                    TextSpan(
+                      text: '${overdue.length} overdue',
+                      style: TextStyle(
+                        color: overdue.isNotEmpty
+                            ? AppColors.alizarin
+                            : AppColors.schooner,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                  LpIconButton(icon: Icons.add, onTap: () {}),
-                ],
+                    TextSpan(text: ' · ${pending.length} due today'),
+                  ],
+                ),
               ),
+              actions: [
+                LpIconButton(icon: Icons.add, onTap: _addFollowUp),
+              ],
             ),
+
+            const SizedBox(height: AppSpacing.sm),
 
             // ── Stats row ──────────────────────────────────────────────────
             Padding(
@@ -244,17 +299,32 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
-class _TaskTile extends StatelessWidget {
+class _TaskTile extends ConsumerWidget {
   const _TaskTile({required this.task});
 
   final FollowUpTask task;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final isOverdue = task.status == FollowUpStatus.overdue;
     final isDone = task.status == FollowUpStatus.done;
+    final notifier = ref.read(followUpsProvider.notifier);
 
-    return TapScale(
+    return Dismissible(
+      key: ValueKey(task.id),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: AppColors.alizarin,
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+        ),
+        child: const Icon(Icons.delete_outline, color: Colors.white),
+      ),
+      onDismissed: (_) => notifier.delete(task.id),
+      child: TapScale(
       onTap: task.leadId != null
           ? () => context.push('/leads/${task.leadId}')
           : null,
@@ -271,25 +341,28 @@ class _TaskTile extends StatelessWidget {
       ),
       child: Row(
         children: [
-          // Checkbox circle
-          Container(
-            width: 22,
-            height: 22,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: isDone ? AppColors.salem : Colors.transparent,
-              border: Border.all(
-                color: isDone
-                    ? AppColors.salem
-                    : isOverdue
-                        ? AppColors.alizarin
-                        : AppColors.westar,
-                width: 1.5,
+          // Checkbox circle — tap to mark done
+          GestureDetector(
+            onTap: isDone ? null : () => notifier.markDone(task.id),
+            child: Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: isDone ? AppColors.salem : Colors.transparent,
+                border: Border.all(
+                  color: isDone
+                      ? AppColors.salem
+                      : isOverdue
+                          ? AppColors.alizarin
+                          : AppColors.westar,
+                  width: 1.5,
+                ),
               ),
+              child: isDone
+                  ? const Icon(Icons.check, size: 12, color: AppColors.white)
+                  : null,
             ),
-            child: isDone
-                ? const Icon(Icons.check, size: 12, color: AppColors.white)
-                : null,
           ),
           const SizedBox(width: AppSpacing.sm),
 
@@ -354,6 +427,7 @@ class _TaskTile extends StatelessWidget {
             ),
           ),
         ],
+      ),
       ),
     ),
     );

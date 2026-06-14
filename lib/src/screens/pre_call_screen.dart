@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:flutter_app_utilities/flutter_app_utilities.dart';
 
 import '../services/call_actions.dart';
@@ -33,10 +34,19 @@ class PreCallScreen extends ConsumerWidget {
               label: 'Start Call',
               icon: Icons.phone_outlined,
               onTap: () async {
+                final lastCall = lead.history.isNotEmpty ? lead.history.first : null;
                 final result = await startCallWithNotesBubble(
                   leadId: lead.id,
                   leadName: lead.name,
                   phoneNumber: lead.phone,
+                  leadScore: lead.score,
+                  temperature: lead.temperature.name,
+                  intent: lead.intent,
+                  scriptOpeningLine: lead.script.openingLine,
+                  memoryFacts: lead.memory.take(4).map((m) => m.text).toList(),
+                  lastCallTs: lastCall?.calledAt?.toIso8601String() ?? '',
+                  lastCallScore: lastCall?.score ?? 0,
+                  lastCallSummary: lastCall?.title ?? '',
                 );
                 if (!context.mounted) return;
 
@@ -57,7 +67,20 @@ class PreCallScreen extends ConsumerWidget {
                       content: Text('No calling app available on this device.'),
                     ),
                   );
+                  return;
                 }
+
+                // Log the outbound call so it persists in Calls + history.
+                await recordOutboundCall(ref, lead);
+                if (!context.mounted) return;
+
+                // Replace pre-call with post-call so back returns to lead detail.
+                // extra=true tells PostCallScreen to reset any previous capture
+                // state so a fresh recording is scanned for.
+                context.pushReplacement(
+                  '/leads/${lead.id}/post-call',
+                  extra: true,
+                );
               },
             ),
           ),
@@ -275,6 +298,12 @@ class _ChecklistPanel extends ConsumerWidget {
       (item) => item.id == leadId,
       orElse: () => leads.first,
     );
+    final extras = ref.watch(checklistExtrasProvider)[lead.id] ?? const [];
+    // Use backend checklist if present, otherwise fall back to real-estate defaults.
+    final baseItems = lead.checklist.isNotEmpty
+        ? lead.checklist
+        : defaultChecklistItems;
+    final allItems = [...baseItems, ...extras];
     final completed = ref.watch(checklistProvider)[lead.id] ?? <String>{};
 
     return LpCard(
@@ -284,13 +313,13 @@ class _ChecklistPanel extends ConsumerWidget {
             children: [
               Expanded(child: Text('CHECKLIST', style: AppText.label11)),
               Text(
-                '${completed.length} / ${lead.checklist.length}',
+                '${allItems.where((i) => completed.contains(i.id)).length} / ${allItems.length}',
                 style: AppText.caption11,
               ),
             ],
           ),
           const AppGap.xs(),
-          for (final item in lead.checklist)
+          for (final item in allItems)
             TapScale(
               onTap: () =>
                   ref.read(checklistProvider.notifier).toggle(lead.id, item.id),
@@ -338,25 +367,65 @@ class _ChecklistPanel extends ConsumerWidget {
                 ),
               ),
             ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(
-              color: AppColors.pampas,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.add, size: 14, color: AppColors.schooner),
-                const AppGap.xs(axis: Axis.horizontal),
-                Text(
-                  'Add item...',
-                  style: AppText.body13.copyWith(color: AppColors.schooner),
-                ),
-              ],
+          GestureDetector(
+            onTap: () => _showAddItemDialog(context, ref, lead.id),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.pampas,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.add, size: 14, color: AppColors.schooner),
+                  const AppGap.xs(axis: Axis.horizontal),
+                  Text(
+                    'Add item...',
+                    style: AppText.body13.copyWith(color: AppColors.schooner),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _showAddItemDialog(
+    BuildContext context,
+    WidgetRef ref,
+    String leadId,
+  ) async {
+    final controller = TextEditingController();
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add checklist item'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: const InputDecoration(hintText: 'e.g. Confirm site visit date'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              final text = controller.text.trim();
+              if (text.isNotEmpty) {
+                ref.read(checklistExtrasProvider.notifier).addItem(leadId, text);
+              }
+              Navigator.of(ctx).pop();
+            },
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
   }
 }

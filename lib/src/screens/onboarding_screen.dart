@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_svg/svg.dart';
 import 'package:go_router/go_router.dart';
 
+import '../services/permission_bootstrap.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_theme.dart';
@@ -19,6 +19,16 @@ class OnboardingScreen extends StatefulWidget {
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
   _Step _step = _Step.phone;
+
+  @override
+  void initState() {
+    super.initState();
+    // Ask for phone + notification access as soon as the app opens, so calling
+    // and reminders work the first time without a crash.
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => PermissionBootstrap.requestStartup(),
+    );
+  }
 
   void _onSendOtp() => setState(() => _step = _Step.otp);
   void _onVerify() => context.go('/home');

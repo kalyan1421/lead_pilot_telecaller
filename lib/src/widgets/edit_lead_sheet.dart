@@ -1,0 +1,298 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../models/lead.dart';
+import '../services/local_lead_override_store.dart';
+import '../state/providers.dart';
+import '../theme/app_colors.dart';
+import '../theme/app_spacing.dart';
+import '../theme/app_theme.dart';
+import 'leadpilot_widgets.dart';
+
+/// Bottom sheet to edit a lead's core details. Edits are saved as a local
+/// override (via [LeadsController.updateLead]) so they persist and show
+/// everywhere the lead appears.
+class EditLeadSheet extends ConsumerStatefulWidget {
+  const EditLeadSheet({super.key, required this.lead});
+
+  final Lead lead;
+
+  static Future<void> show(BuildContext context, Lead lead) =>
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: AppColors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (_) => EditLeadSheet(lead: lead),
+      );
+
+  @override
+  ConsumerState<EditLeadSheet> createState() => _EditLeadSheetState();
+}
+
+class _EditLeadSheetState extends ConsumerState<EditLeadSheet> {
+  late final TextEditingController _name;
+  late final TextEditingController _phone;
+  late final TextEditingController _intent;
+  late LeadSource _source;
+  late LeadTemperature _temperature;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(text: widget.lead.name);
+    _phone = TextEditingController(text: widget.lead.phone);
+    _intent = TextEditingController(text: widget.lead.intent);
+    _source = widget.lead.source;
+    _temperature = widget.lead.temperature;
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _phone.dispose();
+    _intent.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_name.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(const SnackBar(content: Text('Name is required')));
+      return;
+    }
+    setState(() => _saving = true);
+    await ref.read(leadsProvider.notifier).updateLead(
+          widget.lead.id,
+          LeadOverride(
+            name: _name.text.trim(),
+            phone: _phone.text.trim(),
+            intent: _intent.text.trim(),
+            source: _source,
+            temperature: _temperature,
+          ),
+        );
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 18,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 18),
+                decoration: BoxDecoration(
+                  color: AppColors.westar,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            Text('Edit lead', style: AppText.display20.copyWith(fontSize: 18)),
+            const SizedBox(height: 16),
+            _Field(label: 'Name', controller: _name),
+            const SizedBox(height: 14),
+            _Field(
+              label: 'Phone',
+              controller: _phone,
+              keyboardType: TextInputType.phone,
+            ),
+            const SizedBox(height: 14),
+            _Field(label: 'Intent', controller: _intent),
+            const SizedBox(height: 14),
+            Text('Source', style: _labelStyle),
+            const SizedBox(height: 6),
+            _SourceField(
+              value: _source,
+              onChanged: (s) => setState(() => _source = s),
+            ),
+            const SizedBox(height: 14),
+            Text('Temperature', style: _labelStyle),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                for (final t in LeadTemperature.values) ...[
+                  Expanded(
+                    child: _TempChip(
+                      temperature: t,
+                      selected: t == _temperature,
+                      onTap: () => setState(() => _temperature = t),
+                    ),
+                  ),
+                  if (t != LeadTemperature.values.last)
+                    const SizedBox(width: 8),
+                ],
+              ],
+            ),
+            const SizedBox(height: 22),
+            SizedBox(
+              width: double.infinity,
+              child: PrimaryButton(
+                label: _saving ? 'Saving…' : 'Save changes',
+                icon: Icons.check,
+                onTap: _saving ? () {} : _save,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static final _labelStyle = AppText.body14.copyWith(
+    fontWeight: FontWeight.w700,
+    color: AppColors.merlin,
+  );
+}
+
+class _Field extends StatelessWidget {
+  const _Field({
+    required this.label,
+    required this.controller,
+    this.keyboardType,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final TextInputType? keyboardType;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: AppText.body14.copyWith(
+            fontWeight: FontWeight.w700,
+            color: AppColors.merlin,
+          ),
+        ),
+        const SizedBox(height: 6),
+        TextField(
+          controller: controller,
+          keyboardType: keyboardType,
+          style: AppText.body14.copyWith(fontSize: 15, color: AppColors.zeus),
+          decoration: InputDecoration(
+            isDense: true,
+            filled: true,
+            fillColor: AppColors.pampas,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 15, vertical: 14),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: AppColors.westar),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: AppColors.blueRibbon),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SourceField extends StatelessWidget {
+  const _SourceField({required this.value, required this.onChanged});
+
+  final LeadSource value;
+  final ValueChanged<LeadSource> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 15),
+      decoration: BoxDecoration(
+        color: AppColors.pampas,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.westar),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<LeadSource>(
+          value: value,
+          isExpanded: true,
+          icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.schooner),
+          style: AppText.body14.copyWith(color: AppColors.zeus),
+          borderRadius: BorderRadius.circular(10),
+          items: [
+            for (final source in LeadSource.values)
+              DropdownMenuItem(value: source, child: Text(source.displayName)),
+          ],
+          onChanged: (s) {
+            if (s != null) onChanged(s);
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _TempChip extends StatelessWidget {
+  const _TempChip({
+    required this.temperature,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final LeadTemperature temperature;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final (fg, bg, border) = switch (temperature) {
+      LeadTemperature.hot => (
+          AppColors.alizarin,
+          AppColors.redSurface,
+          AppColors.redBorder
+        ),
+      LeadTemperature.warm => (
+          AppColors.tahitiGold,
+          AppColors.warningSurface,
+          AppColors.warningBorder
+        ),
+      LeadTemperature.cold => (
+          AppColors.schooner,
+          AppColors.pampas,
+          AppColors.westar
+        ),
+    };
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? bg : AppColors.white,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          border: Border.all(color: selected ? fg : border, width: selected ? 1.5 : 1),
+        ),
+        child: Text(
+          temperature.name,
+          style: AppText.body13.copyWith(
+            fontWeight: FontWeight.w700,
+            color: selected ? fg : AppColors.schooner,
+          ),
+        ),
+      ),
+    );
+  }
+}

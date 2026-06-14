@@ -109,6 +109,62 @@ class LpTopBar extends StatelessWidget {
   }
 }
 
+/// Shared header for the four bottom-tab screens (Inbox, Calls, Follow-ups,
+/// Profile) so they all share one consistent "app bar". A white bar with a
+/// bottom border, a big title, an optional subtitle, and trailing actions.
+class LpTabHeader extends StatelessWidget {
+  const LpTabHeader({
+    super.key,
+    required this.title,
+    this.subtitle,
+    this.subtitleWidget,
+    this.actions = const [],
+  });
+
+  final String title;
+  final String? subtitle;
+  final Widget? subtitleWidget;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 12, 16, 16),
+      decoration: const BoxDecoration(
+        color: AppColors.white,
+        border: Border(bottom: BorderSide(color: AppColors.westar)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: AppText.display24.copyWith(fontSize: 24)),
+                if (subtitleWidget != null) ...[
+                  const SizedBox(height: 2),
+                  subtitleWidget!,
+                ] else if (subtitle case final s?) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    s,
+                    style: AppText.body13.copyWith(color: AppColors.schooner),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          for (final action in actions) ...[
+            const SizedBox(width: 10),
+            action,
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class LpIconButton extends StatelessWidget {
   const LpIconButton({
     super.key,

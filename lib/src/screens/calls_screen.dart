@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../models/lead.dart';
@@ -9,12 +10,35 @@ import '../theme/app_spacing.dart';
 import '../theme/app_theme.dart';
 import '../widgets/leadpilot_widgets.dart';
 
-class CallsScreen extends ConsumerWidget {
+class CallsScreen extends ConsumerStatefulWidget {
   const CallsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final callLog = ref.watch(callLogProvider);
+  ConsumerState<CallsScreen> createState() => _CallsScreenState();
+}
+
+class _CallsScreenState extends ConsumerState<CallsScreen> {
+  bool _searching = false;
+  final _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final allCalls = ref.watch(callLogProvider);
+    final q = _query.trim().toLowerCase();
+    final callLog = q.isEmpty
+        ? allCalls
+        : allCalls
+            .where((e) =>
+                e.leadName.toLowerCase().contains(q) ||
+                e.phone.toLowerCase().contains(q))
+            .toList();
 
     // Group by date section label
     final today = <CallLogEntry>[];
@@ -43,50 +67,106 @@ class CallsScreen extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // ── Header ────────────────────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('My Calls', style: AppText.display20.copyWith(fontSize: 22)),
-                        Text(
-                          'This week',
-                          style: AppText.body13.copyWith(color: AppColors.schooner),
-                        ),
-                      ],
-                    ),
-                  ),
-                  LpIconButton(icon: Icons.search, onTap: () {}),
-                ],
-              ),
+            LpTabHeader(
+              title: 'My Calls',
+              subtitle: '${allCalls.length} call${allCalls.length == 1 ? '' : 's'} logged',
+              actions: [
+                LpIconButton(
+                  icon: _searching ? Icons.close : Icons.search,
+                  onTap: () => setState(() {
+                    _searching = !_searching;
+                    if (!_searching) {
+                      _searchController.clear();
+                      _query = '';
+                    }
+                  }),
+                ),
+              ],
             ),
 
-            // ── Stats ─────────────────────────────────────────────────────
+            if (_searching)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: Container(
+                  height: 44,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: AppColors.white,
+                    borderRadius: BorderRadius.circular(AppRadius.lg),
+                    border: Border.all(color: AppColors.westar),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.search,
+                          size: 16, color: AppColors.schooner),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: TextField(
+                          controller: _searchController,
+                          autofocus: true,
+                          onChanged: (v) => setState(() => _query = v),
+                          style: AppText.body14.copyWith(color: AppColors.zeus),
+                          decoration: InputDecoration(
+                            isCollapsed: true,
+                            border: InputBorder.none,
+                            hintText: 'Search calls...',
+                            hintStyle: AppText.body14
+                                .copyWith(color: AppColors.boulder),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+            const SizedBox(height: AppSpacing.sm),
+
+            // ── Stats (computed from real data) ───────────────────────────
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: const [
-                  Expanded(
-                    child: MetricTile(label: 'This Month', value: '142', mono: true),
-                  ),
-                  SizedBox(width: 6),
-                  Expanded(
-                    child: MetricTile(
-                      label: 'Avg Score',
-                      value: '86',
-                      valueColor: AppColors.salem,
-                      mono: true,
+              child: Builder(builder: (_) {
+                final now = DateTime.now();
+                final thisMonth = callLog.where((e) =>
+                    e.calledAt.year == now.year &&
+                    e.calledAt.month == now.month).toList();
+                final avgScore = callLog.isEmpty
+                    ? 0
+                    : (callLog.map((e) => e.score).fold(0, (a, b) => a + b) ~/
+                        callLog.length);
+                final totalSecs = callLog.fold(0, (a, e) => a + e.duration.inSeconds);
+                final avgSecs = callLog.isEmpty ? 0 : totalSecs ~/ callLog.length;
+                final avgDur =
+                    '${(avgSecs ~/ 60).toString().padLeft(2, '0')}:${(avgSecs % 60).toString().padLeft(2, '0')}';
+                return Row(
+                  children: [
+                    Expanded(
+                      child: MetricTile(
+                        label: 'This Month',
+                        value: '${thisMonth.length}',
+                        mono: true,
+                      ),
                     ),
-                  ),
-                  SizedBox(width: 6),
-                  Expanded(
-                    child: MetricTile(label: 'Avg Duration', value: '4:12', mono: true),
-                  ),
-                ],
-              ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: MetricTile(
+                        label: 'Avg Score',
+                        value: callLog.isEmpty ? '—' : '$avgScore',
+                        valueColor: AppColors.salem,
+                        mono: true,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: MetricTile(
+                        label: 'Avg Duration',
+                        value: callLog.isEmpty ? '—' : avgDur,
+                        mono: true,
+                      ),
+                    ),
+                  ],
+                );
+              }),
             ),
 
             const SizedBox(height: AppSpacing.sm),
@@ -96,6 +176,31 @@ class CallsScreen extends ConsumerWidget {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
                 children: [
+                  if (callLog.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 60),
+                      child: Column(
+                        children: [
+                          const Icon(Icons.call_outlined,
+                              size: 40, color: AppColors.tide),
+                          const SizedBox(height: 8),
+                          Text(
+                            q.isEmpty ? 'No calls yet' : 'No matching calls',
+                            style: AppText.body14.copyWith(
+                              color: AppColors.schooner,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            q.isEmpty
+                                ? 'Calls you make will show up here'
+                                : 'Try a different search',
+                            style: AppText.caption11,
+                          ),
+                        ],
+                      ),
+                    ),
                   if (today.isNotEmpty) ...[
                     _SectionLabel(label: 'TODAY'),
                     for (final e in today) _CallTile(entry: e),
@@ -141,7 +246,11 @@ class _CallTile extends StatelessWidget {
     final dur = _fmtDuration(entry.duration);
     final time = DateFormat('h:mm a').format(entry.calledAt);
 
-    return Container(
+    return GestureDetector(
+      onTap: entry.leadId != null
+          ? () => context.push('/leads/${entry.leadId}')
+          : null,
+      child: Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
       decoration: BoxDecoration(
@@ -217,6 +326,7 @@ class _CallTile extends StatelessWidget {
           ScoreRing(score: entry.score, size: 38),
         ],
       ),
+    ),
     );
   }
 

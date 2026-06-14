@@ -5,6 +5,7 @@ import '../screens/add_outbound_lead_screen.dart';
 import '../screens/dialer_screen.dart';
 import '../screens/lead_detail_screen.dart';
 import '../screens/main_shell.dart';
+import '../screens/notifications_screen.dart';
 import '../screens/onboarding_screen.dart';
 import '../screens/post_call_screen.dart';
 import '../screens/pre_call_screen.dart';
@@ -33,14 +34,20 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const AddOutboundLeadScreen(),
       ),
       GoRoute(
+        path: '/notifications',
+        builder: (context, state) => const NotificationsScreen(),
+      ),
+      GoRoute(
         path: '/dialer/:id',
         builder: (context, state) =>
             DialerScreen(leadId: state.pathParameters['id']!),
       ),
       GoRoute(
         path: '/leads/:id/post-call',
-        builder: (context, state) =>
-            PostCallScreen(leadId: state.pathParameters['id']!),
+        builder: (context, state) => PostCallScreen(
+          leadId: state.pathParameters['id']!,
+          isNewCall: state.extra as bool? ?? false,
+        ),
       ),
     ],
   );

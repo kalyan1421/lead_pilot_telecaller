@@ -54,6 +54,14 @@ Future<CallWithNotesLaunch> startCallWithNotesBubble({
   required String leadId,
   required String leadName,
   required String phoneNumber,
+  int leadScore = 0,
+  String temperature = '',
+  String intent = '',
+  String scriptOpeningLine = '',
+  List<String> memoryFacts = const [],
+  String lastCallTs = '',
+  int lastCallScore = 0,
+  String lastCallSummary = '',
 }) async {
   final normalizedPhoneNumber = _normalizedPhoneNumber(phoneNumber);
 
@@ -65,6 +73,14 @@ Future<CallWithNotesLaunch> startCallWithNotesBubble({
           'leadId': leadId,
           'leadName': leadName,
           'phoneNumber': normalizedPhoneNumber,
+          'leadScore': leadScore,
+          'temperature': temperature,
+          'intent': intent,
+          'scriptOpeningLine': scriptOpeningLine,
+          'memoryFacts': memoryFacts,
+          'lastCallTs': lastCallTs,
+          'lastCallScore': lastCallScore,
+          'lastCallSummary': lastCallSummary,
         },
       );
 

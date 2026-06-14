@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import '../widgets/schedule_call_sheet.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_app_utilities/flutter_app_utilities.dart'
@@ -18,9 +19,18 @@ import '../theme/app_theme.dart';
 import '../widgets/leadpilot_widgets.dart';
 
 class PostCallScreen extends ConsumerStatefulWidget {
-  const PostCallScreen({super.key, required this.leadId});
+  const PostCallScreen({
+    super.key,
+    required this.leadId,
+    this.isNewCall = false,
+  });
 
   final String leadId;
+
+  /// True when navigating here immediately after starting a call from
+  /// [PreCallScreen]. Causes the capture state to reset so a fresh recording
+  /// is scanned for, rather than re-using the previous call's file.
+  final bool isNewCall;
 
   @override
   ConsumerState<PostCallScreen> createState() => _PostCallScreenState();
@@ -48,10 +58,20 @@ class _PostCallScreenState extends ConsumerState<PostCallScreen>
       setState(() => _rendering = false);
       _renderController.stop();
     });
-    _syncCallNotes(stopOverlay: true);
-    // Pick up the recording the dialer saved for the call that just ended.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(callCaptureProvider.notifier).captureLatest(widget.leadId);
+    _syncCallNotes(stopOverlay: widget.isNewCall);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final notifier = ref.read(callCaptureProvider.notifier);
+      if (widget.isNewCall) {
+        // Clear any recording/transcript from a previous call so the fresh
+        // recording is picked up when the user returns from the dialer.
+        notifier.resetForNewCall(widget.leadId);
+        // Scan immediately — will return notFound since the call hasn't
+        // ended yet. The resumed lifecycle event will re-scan and find it.
+        notifier.captureLatest(widget.leadId);
+      } else {
+        // Viewing history — restore the last saved transcript if available.
+        await notifier.restoreSaved(widget.leadId);
+      }
     });
   }
 
@@ -96,6 +116,51 @@ class _PostCallScreenState extends ConsumerState<PostCallScreen>
 
     return Scaffold(
       backgroundColor: AppColors.springWood,
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.calendar_today_outlined, size: 16),
+                  label: const Text('Schedule Follow-up'),
+                  onPressed: () => ScheduleCallSheet.show(
+                    context,
+                    lead,
+                    daysAhead: 2,
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.blueRibbon,
+                    side: BorderSide(color: AppColors.blueRibbon),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.phone_outlined, size: 16),
+                  label: const Text('Call Again'),
+                  onPressed: () => context.go('/leads/${lead.id}/pre-call'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.blueRibbon,
+                    foregroundColor: AppColors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                    ),
+                    elevation: 0,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
       body: SafeArea(
         child: Column(
           children: [
@@ -146,7 +211,9 @@ class _CallDetailHeader extends StatelessWidget {
             children: [
               LpIconButton(
                 icon: Icons.arrow_back,
-                onTap: () => context.go('/leads/${lead.id}'),
+                onTap: () => context.canPop()
+                    ? context.pop()
+                    : context.go('/leads/${lead.id}'),
                 size: 38,
               ),
               const Spacer(),
@@ -349,23 +416,14 @@ class _SummaryTab extends StatelessWidget {
           const AppGap.md(),
         ],
         _CallNotesCard(notes: notes),
-        if (a != null) ...[
-          if (a.keyPoints.isNotEmpty) ...[
-            const AppGap.md(),
-            _KeyPointsCard(keyPoints: a.keyPoints, notes: notes),
-          ],
-          if (a.nextSteps.isNotEmpty) ...[
-            const AppGap.md(),
-            _NextStepsCard(steps: a.nextSteps),
-          ],
-        ] else ...[
+        if (a != null && a.keyPoints.isNotEmpty) ...[
           const AppGap.md(),
-          const _AwaitingAnalysisCard(
-            message:
-                'Key points and next steps appear after you capture and '
-                'transcribe the call.',
-          ),
+          _KeyPointsCard(keyPoints: a.keyPoints, notes: notes),
         ],
+        // Next steps are always actionable — analysis suggestions when present,
+        // otherwise sensible defaults. The action buttons always work.
+        const AppGap.md(),
+        _NextStepsSection(lead: lead, steps: a?.nextSteps ?? const []),
       ],
     );
   }
@@ -652,25 +710,25 @@ class _KeyPointsCard extends StatelessWidget {
   }
 }
 
-class _NextStepsCard extends StatelessWidget {
-  const _NextStepsCard({required this.steps});
+class _NextStepsSection extends StatelessWidget {
+  const _NextStepsSection({required this.lead, required this.steps});
 
+  final Lead lead;
   final List<AnalysisNextStep> steps;
 
   @override
   Widget build(BuildContext context) {
-    final rows = [for (final s in steps) (s.title, s.action)];
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('Next Steps', style: AppText.display16),
         const AppGap.sm(),
-        for (var i = 0; i < rows.length; i++)
+        // AI-suggested steps (when the call has been analysed).
+        for (var i = 0; i < steps.length; i++)
           Padding(
             padding: const EdgeInsets.only(bottom: 9),
             child: LpCard(
-              padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
               child: Row(
                 children: [
                   Container(
@@ -692,42 +750,88 @@ class _NextStepsCard extends StatelessWidget {
                   const AppGap.sm(axis: Axis.horizontal),
                   Expanded(
                     child: Text(
-                      rows[i].$1,
+                      steps[i].title,
                       style: AppText.body13.copyWith(
                         color: AppColors.zeus,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
-                  _SoftAction(label: rows[i].$2),
                 ],
               ),
             ),
           ),
+        // Always-available quick actions.
+        _NextStepAction(
+          icon: Icons.calendar_today_outlined,
+          label: 'Schedule a follow-up',
+          color: AppColors.blueRibbon,
+          onTap: () => ScheduleCallSheet.show(context, lead, daysAhead: 2),
+        ),
+        const AppGap.xs(),
+        _NextStepAction(
+          icon: Icons.phone_outlined,
+          label: 'Call ${lead.name} again',
+          color: AppColors.greenHaze,
+          onTap: () => context.go('/leads/${lead.id}/pre-call'),
+        ),
+        const AppGap.xs(),
+        _NextStepAction(
+          icon: Icons.sms_outlined,
+          label: 'Send a message',
+          color: AppColors.electricViolet,
+          onTap: () => launchSms(lead.phone),
+        ),
       ],
     );
   }
 }
 
-class _SoftAction extends StatelessWidget {
-  const _SoftAction({required this.label});
+class _NextStepAction extends StatelessWidget {
+  const _NextStepAction({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
 
+  final IconData icon;
   final String label;
+  final Color color;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppColors.ribbonSurface,
-        borderRadius: BorderRadius.circular(AppRadius.xs),
-      ),
-      child: Text(
-        label,
-        style: AppText.body13.copyWith(
-          color: AppColors.blueRibbon,
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
+    return TapScale(
+      onTap: onTap,
+      child: LpCard(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+              ),
+              child: Icon(icon, size: 16, color: color),
+            ),
+            const AppGap.sm(axis: Axis.horizontal),
+            Expanded(
+              child: Text(
+                label,
+                style: AppText.body14.copyWith(
+                  color: AppColors.zeus,
+                  fontWeight: FontWeight.w600,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const Icon(Icons.chevron_right, size: 18, color: AppColors.tide),
+          ],
         ),
       ),
     );
@@ -1128,7 +1232,7 @@ class _TranscriptTabState extends ConsumerState<_TranscriptTab> {
     }
 
     // Heuristic: the first speaker is the telecaller ("You"); the other is the
-    // lead. speakerId is Sarvam's diarization label ("0"/"1").
+    // lead. speakerId is the diarization label returned by the backend ("0"/"1").
     final firstSpeaker = transcription.entries.first.speakerId;
     final hasEnglish =
         transcription.entries.any((e) => (e.textEn ?? '').trim().isNotEmpty);
@@ -1431,6 +1535,20 @@ class _CallRecordingCard extends ConsumerWidget {
               ),
             ],
           ),
+          if (capture.status == CaptureStatus.transcribing) ...[
+            const AppGap.sm(),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: (capture.processingPercent ?? 0) > 0
+                    ? (capture.processingPercent! / 100).clamp(0.0, 1.0)
+                    : null,
+                minHeight: 4,
+                backgroundColor: AppColors.blueRibbon.withValues(alpha: 0.12),
+                valueColor: AlwaysStoppedAnimation<Color>(AppColors.blueRibbon),
+              ),
+            ),
+          ],
           ..._actions(context, ref, notifier, capture),
         ],
       ),
@@ -1461,8 +1579,8 @@ class _CallRecordingCard extends ConsumerWidget {
         return (
           Icons.cloud_upload_outlined,
           AppColors.blueRibbon,
-          'Transcribing…',
-          'Uploading audio for speech-to-text.',
+          capture.processingLabel ?? 'Uploading recording…',
+          'This takes 2–4 min on first run (Whisper AI on CPU).',
         );
       case CaptureStatus.transcribed:
         return (

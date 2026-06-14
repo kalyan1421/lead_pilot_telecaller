@@ -6,10 +6,13 @@ import 'package:flutter_app_utilities/flutter_app_utilities.dart';
 
 import '../models/lead.dart';
 import '../services/call_actions.dart';
+import '../services/local_call_store.dart';
 import '../state/providers.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import '../widgets/edit_lead_sheet.dart';
 import '../widgets/leadpilot_widgets.dart';
+import '../widgets/schedule_call_sheet.dart';
 
 class LeadDetailScreen extends ConsumerWidget {
   const LeadDetailScreen({super.key, required this.leadId});
@@ -24,25 +27,39 @@ class LeadDetailScreen extends ConsumerWidget {
       orElse: () => leads.first,
     );
 
+    // Merge any locally-recorded calls for this lead into the backend history.
+    final localCalls = ref.watch(localCallsProvider);
+    final mergedHistory = _mergeHistory(lead, localCalls);
+
     return LpScreen(
       title: 'Lead Detail',
-      trailing: LpPill(
-        label: lead.temperature.name,
-        foreground: switch (lead.temperature) {
-          LeadTemperature.hot => AppColors.alizarin,
-          LeadTemperature.warm => AppColors.tahitiGold,
-          LeadTemperature.cold => AppColors.schooner,
-        },
-        background: switch (lead.temperature) {
-          LeadTemperature.hot => AppColors.redSurface,
-          LeadTemperature.warm => AppColors.warningSurface,
-          LeadTemperature.cold => AppColors.pampas,
-        },
-        border: switch (lead.temperature) {
-          LeadTemperature.hot => AppColors.redBorder,
-          LeadTemperature.warm => AppColors.warningBorder,
-          LeadTemperature.cold => AppColors.westar,
-        },
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          LpPill(
+            label: lead.temperature.name,
+            foreground: switch (lead.temperature) {
+              LeadTemperature.hot => AppColors.alizarin,
+              LeadTemperature.warm => AppColors.tahitiGold,
+              LeadTemperature.cold => AppColors.schooner,
+            },
+            background: switch (lead.temperature) {
+              LeadTemperature.hot => AppColors.redSurface,
+              LeadTemperature.warm => AppColors.warningSurface,
+              LeadTemperature.cold => AppColors.pampas,
+            },
+            border: switch (lead.temperature) {
+              LeadTemperature.hot => AppColors.redBorder,
+              LeadTemperature.warm => AppColors.warningBorder,
+              LeadTemperature.cold => AppColors.westar,
+            },
+          ),
+          const AppGap.xs(axis: Axis.horizontal),
+          LpIconButton(
+            icon: Icons.edit_outlined,
+            onTap: () => EditLeadSheet.show(context, lead),
+          ),
+        ],
       ),
       bottom: BottomActionBar(
         children: [
@@ -63,7 +80,7 @@ class LeadDetailScreen extends ConsumerWidget {
           SecondaryButton(
             label: '',
             icon: Icons.calendar_today_outlined,
-            onTap: () {},
+            onTap: () => ScheduleCallSheet.show(context, lead),
           ),
         ],
       ),
@@ -72,12 +89,14 @@ class LeadDetailScreen extends ConsumerWidget {
         children: [
           LeadSummaryCard(lead: lead),
           const AppGap.md(),
+          _PipelineStrip(leadId: lead.id),
+          const AppGap.md(),
           Row(
             children: [
               Expanded(
                 child: MetricTile(
                   label: 'Total Calls',
-                  value: '${lead.totalCalls}',
+                  value: '${mergedHistory.length > lead.totalCalls ? mergedHistory.length : lead.totalCalls}',
                   mono: true,
                 ),
               ),
@@ -102,10 +121,34 @@ class LeadDetailScreen extends ConsumerWidget {
           const AppGap.md(),
           MemoryPanel(lead: lead),
           const AppGap.md(),
-          CallHistoryPanel(history: lead.history),
+          CallHistoryPanel(leadId: lead.id, history: mergedHistory),
         ],
       ),
     );
+  }
+
+  /// Backend call history plus locally-recorded calls for this lead, newest
+  /// first, with same-minute duplicates collapsed.
+  List<CallRecord> _mergeHistory(Lead lead, List<CallLogEntry> localCalls) {
+    final merged = [...lead.history];
+    for (final c in localCalls) {
+      if (c.leadId != lead.id) continue;
+      final dup = merged.any((h) =>
+          h.calledAt != null &&
+          h.calledAt!.difference(c.calledAt).inMinutes.abs() < 1);
+      if (dup) continue;
+      merged.add(CallRecord(
+        title:
+            '${c.calledAt.day.toString().padLeft(2, '0')}/${c.calledAt.month.toString().padLeft(2, '0')} · placed',
+        duration: c.duration,
+        score: c.score,
+        calledAt: c.calledAt,
+        leadId: lead.id,
+      ));
+    }
+    merged.sort((a, b) =>
+        (b.calledAt ?? DateTime(0)).compareTo(a.calledAt ?? DateTime(0)));
+    return merged;
   }
 
   String _relativeDay(DateTime date) {
@@ -117,6 +160,113 @@ class LeadDetailScreen extends ConsumerWidget {
     if (days <= 0) return 'today';
     if (days == 1) return '1 day ago';
     return '$days days ago';
+  }
+}
+
+// ─── Lead pipeline strip ─────────────────────────────────────────────────────
+
+class _PipelineStrip extends ConsumerWidget {
+  const _PipelineStrip({required this.leadId});
+
+  final String leadId;
+
+  static const _stages = LeadStage.values;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final stage = ref.watch(leadStageProvider.select((m) => m[leadId] ?? LeadStage.newLead));
+    final notifier = ref.read(leadStageProvider.notifier);
+
+    return LpCard(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('PIPELINE STAGE', style: AppText.label11),
+          const AppGap.sm(),
+          Row(
+            children: [
+              for (var i = 0; i < _stages.length; i++) ...[
+                Expanded(
+                  child: _StageChip(
+                    label: _stages[i].label,
+                    isActive: _stages[i] == stage,
+                    isDead: _stages[i] == LeadStage.dead,
+                    onTap: () => notifier.setStage(leadId, _stages[i]),
+                  ),
+                ),
+                if (i < _stages.length - 1)
+                  Container(
+                    width: 10,
+                    height: 1.5,
+                    color: stage.index > i ? AppColors.blueRibbon : AppColors.westar,
+                  ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StageChip extends StatelessWidget {
+  const _StageChip({
+    required this.label,
+    required this.isActive,
+    required this.isDead,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool isActive;
+  final bool isDead;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final activeColor = isDead ? AppColors.alizarin : AppColors.blueRibbon;
+    final activeSurface = isDead ? AppColors.redSurface : AppColors.ribbonSurface;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        children: [
+          Container(
+            width: 20,
+            height: 20,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isActive ? activeColor : AppColors.white,
+              border: Border.all(
+                color: isActive ? activeColor : AppColors.westar,
+                width: 1.5,
+              ),
+            ),
+            child: isActive
+                ? Icon(Icons.check, size: 11, color: AppColors.white)
+                : null,
+          ),
+          const SizedBox(height: 4),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+            decoration: BoxDecoration(
+              color: isActive ? activeSurface : Colors.transparent,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              label,
+              style: AppText.label11.copyWith(
+                fontSize: 9,
+                color: isActive ? activeColor : AppColors.schooner,
+                fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -137,22 +287,32 @@ class MemoryPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (compact) ...[
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: AppColors.ribbonSurface,
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                'Last called 4 days ago - Score 68',
-                style: AppText.body13.copyWith(
-                  color: AppColors.blueRibbon,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
+          if (compact && lead.history.isNotEmpty) ...[
+            Builder(builder: (_) {
+              final last = lead.history.first;
+              final when = last.calledAt;
+              final ago = when == null
+                  ? 'recently'
+                  : _agoLabel(DateTime.now().difference(when));
+              return Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.ribbonSurface,
+                  borderRadius: BorderRadius.circular(999),
                 ),
-              ),
-            ),
+                child: Text(
+                  last.score > 0
+                      ? 'Last called $ago · Score ${last.score}'
+                      : 'Last called $ago',
+                  style: AppText.body13.copyWith(
+                    color: AppColors.blueRibbon,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              );
+            }),
             const AppGap.sm(),
           ],
           for (final item in compact ? lead.memory.take(3) : lead.memory)
@@ -201,11 +361,23 @@ class MemoryPanel extends StatelessWidget {
       _ => AppColors.electricViolet,
     };
   }
+
+  String _agoLabel(Duration diff) {
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays == 1) return '1 day ago';
+    return '${diff.inDays} days ago';
+  }
 }
 
 class CallHistoryPanel extends StatelessWidget {
-  const CallHistoryPanel({super.key, required this.history});
+  const CallHistoryPanel({
+    super.key,
+    required this.leadId,
+    required this.history,
+  });
 
+  final String leadId;
   final List<CallRecord> history;
 
   @override
@@ -234,45 +406,58 @@ class CallHistoryPanel extends StatelessWidget {
             ),
           ),
           const Divider(height: 1),
+          if (history.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+              child: Text(
+                'No calls yet. Make your first call to see history here.',
+                style: AppText.caption11.copyWith(color: AppColors.schooner),
+              ),
+            ),
           for (var i = 0; i < history.length; i++)
             Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              history[i].title,
-                              style: AppText.body14.copyWith(
-                                fontWeight: FontWeight.w700,
+                InkWell(
+                  onTap: () => context.push('/leads/$leadId/post-call'),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                history[i].title,
+                                style: AppText.body14.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
-                            ),
-                            Text(
-                              '${formatter.format(history[i].duration.inMinutes)}:${formatter.format(history[i].duration.inSeconds.remainder(60))}',
-                              style: AppText.mono(size: 11.5),
-                            ),
-                          ],
+                              Text(
+                                history[i].duration == Duration.zero
+                                    ? '—'
+                                    : '${formatter.format(history[i].duration.inMinutes)}:${formatter.format(history[i].duration.inSeconds.remainder(60))}',
+                                style: AppText.mono(size: 11.5),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      LpPill(
-                        label: '${history[i].score} pts',
-                        foreground: AppColors.salem,
-                        background: AppColors.white,
-                        border: AppColors.iceCold,
-                      ),
-                      const Icon(
-                        Icons.chevron_right,
-                        size: 18,
-                        color: AppColors.tide,
-                      ),
-                    ],
+                        LpPill(
+                          label: '${history[i].score} pts',
+                          foreground: AppColors.salem,
+                          background: AppColors.white,
+                          border: AppColors.iceCold,
+                        ),
+                        const Icon(
+                          Icons.chevron_right,
+                          size: 18,
+                          color: AppColors.tide,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 if (i < history.length - 1) const Divider(height: 1),
@@ -283,3 +468,4 @@ class CallHistoryPanel extends StatelessWidget {
     );
   }
 }
+

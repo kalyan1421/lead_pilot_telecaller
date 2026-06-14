@@ -1,29 +1,50 @@
 /// Single source of truth for backend endpoint paths.
 ///
-/// Paths are relative to [ApiConfig.baseUrl]. Keeping them here means a backend
-/// route change is a one-line edit, not a codebase-wide search.
+/// Paths are relative to [ApiConfig.baseUrl] and mirror the FastAPI routes in
+/// `voicesummary-main` (the "AI layer" backend). Keeping them here means a
+/// backend route change is a one-line edit, not a codebase-wide search.
+///
+/// Route reference (FastAPI, port 8000):
+///   * `/api/inbox`                          — lead inbox cards + header stats
+///   * `/api/leads/{contact_key}`            — full lead detail (card+memory+calls)
+///   * `/api/leads`                          — create lead (Save Lead)
+///   * `/api/leads/dedupe?phone=`            — duplicate check
+///   * `/api/memory/{contact_key}`           — memory bubble
+///   * `/api/telecaller/score?window_days=`  — telecaller rolling score
+///   * `/api/calls/upload`                   — outbound recording upload
+///   * `/api/calls/{id}/processing-status`   — Upload→Transcribe→Analyse→Done
+///   * `/api/calls/{id}/lead-analysis`       — per-call AI analysis
+///   * `/api/calls/{id}/transcript/translate`— "View English" toggle
 class ApiEndpoints {
   const ApiEndpoints._();
 
-  // Leads
-  static const String leads = '/leads';
-  static String leadById(String id) => '/leads/$id';
-  static const String outboundLeads = '/leads/outbound';
+  // Lead inbox + detail
+  static const String inbox = '/api/inbox';
+  static String leadDetail(String contactKey) => '/api/leads/$contactKey';
+  static const String createLead = '/api/leads';
+  static const String dedupeLead = '/api/leads/dedupe';
 
-  // Follow-ups
-  static const String followUps = '/follow-ups';
-  static String followUpById(String id) => '/follow-ups/$id';
+  // Memory bubble (per-contact cumulative memory)
+  static String memory(String contactKey) => '/api/memory/$contactKey';
+  static String rebuildMemory(String contactKey) =>
+      '/api/memory/$contactKey/rebuild';
 
-  // Call logs
-  static const String callLogs = '/call-logs';
+  // Telecaller score + trend
+  static const String telecallerScore = '/api/telecaller/score';
 
-  // Call-recording speech-to-text (multipart audio upload → async job)
-  static const String transcribeCall = '/calls/transcribe';
-  static String transcribeJob(String jobId) => '/calls/transcribe/$jobId';
+  // Outbound recording upload → transcribe → analyse → memory
+  static const String uploadRecording = '/api/calls/upload';
+  static String processingStatus(String callId) =>
+      '/api/calls/$callId/processing-status';
 
-  // Per-lead call notes
-  static String leadNotes(String leadId) => '/leads/$leadId/notes';
+  // Per-call AI analysis
+  static String leadAnalysis(String callId) =>
+      '/api/calls/$callId/lead-analysis';
 
-  // Per-lead pre-call checklist
-  static String leadChecklist(String leadId) => '/leads/$leadId/checklist';
+  // Raw transcript turns for a call
+  static String transcript(String callId) => '/api/calls/$callId/transcript';
+
+  // Transcript translation ("View English")
+  static String translate(String callId) =>
+      '/api/calls/$callId/transcript/translate';
 }

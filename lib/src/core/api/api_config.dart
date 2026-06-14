@@ -14,16 +14,17 @@ class ApiEnvironment {
   final String name;
   final String baseUrl;
 
-  // TODO(backend): replace placeholder hosts with the real ones.
-  //
-  // `dev` points at the local NestJS backend in /server (transcription).
+  // `dev` points at the local FastAPI "AI layer" backend (voicesummary-main),
+  // which serves /api/inbox, /api/leads, /api/memory, /api/calls/* on port 8000.
   //   * Physical device (the Xiaomi): dev machine LAN IP, phone on same Wi-Fi.
-  //     Currently set to this Mac's en0 IP (192.168.31.132). Re-check with
+  //     Set to this Mac's en0 IP (192.168.31.132). Re-check with
   //     `ipconfig getifaddr en0` if your network changes.
-  //   * Android emulator instead: use http://10.0.2.2:3000 (host loopback).
+  //   * Android emulator instead: use http://10.0.2.2:8000 (host loopback).
+  //   * Run the backend with:
+  //       uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
   static const dev = ApiEnvironment(
     name: 'dev',
-    baseUrl: 'http://192.168.31.132:3000',
+    baseUrl: 'http://192.168.31.132:8000',
   );
   static const staging = ApiEnvironment(
     name: 'staging',
@@ -38,9 +39,10 @@ class ApiEnvironment {
 class ApiConfig {
   const ApiConfig._();
 
-  /// While `true`, the app sources data from local mocks. Flip to `false`
-  /// once a real [ApiClient] and repositories are wired.
-  static const bool useMockData = true;
+  /// While `true`, the app sources data from local mocks. Now `false`: the
+  /// data providers hydrate from the FastAPI backend via [LeadRepository],
+  /// falling back to mock data only if the backend is unreachable.
+  static const bool useMockData = false;
 
   /// The active backend target. Swap to [ApiEnvironment.staging] / `.prod`
   /// per build flavor when those exist.

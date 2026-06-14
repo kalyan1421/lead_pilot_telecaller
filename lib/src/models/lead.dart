@@ -2,6 +2,26 @@ enum LeadTemperature { hot, warm, cold }
 
 enum LeadSource { meta, referral, event, inbound, website, organic }
 
+/// CRM pipeline stages for a lead, set manually by the telecaller.
+enum LeadStage { newLead, interested, siteVisit, booked, dead }
+
+extension LeadStageX on LeadStage {
+  String get value => name;
+
+  String get label => switch (this) {
+    LeadStage.newLead => 'New',
+    LeadStage.interested => 'Interested',
+    LeadStage.siteVisit => 'Site Visit',
+    LeadStage.booked => 'Booked',
+    LeadStage.dead => 'Dead',
+  };
+
+  static LeadStage fromValue(String? v) => LeadStage.values.firstWhere(
+    (e) => e.name == v,
+    orElse: () => LeadStage.newLead,
+  );
+}
+
 extension LeadTemperatureX on LeadTemperature {
   /// Wire value used in API payloads, e.g. "hot".
   String get value => name;
@@ -69,6 +89,31 @@ class Lead {
   final List<CallRecord> history;
   /// Short topic shown in the lead tile timestamp, e.g. "Luxury Villas Search".
   final String? propertyInterest;
+
+  /// Safe placeholder used while the inbox is loading or empty, so providers
+  /// that must return a non-null [Lead] never throw on an empty list.
+  factory Lead.empty() => Lead(
+    id: '',
+    name: '',
+    phone: '',
+    score: 0,
+    temperature: LeadTemperature.cold,
+    source: LeadSource.organic,
+    intent: '',
+    lastContact: DateTime.fromMillisecondsSinceEpoch(0),
+    totalCalls: 0,
+    averageScore: 0,
+    memory: const [],
+    script: const AiScript(
+      generatedAgo: '',
+      openingLine: '',
+      keyPoints: [],
+      steps: [],
+    ),
+    objections: const [],
+    checklist: const [],
+    history: const [],
+  );
 
   factory Lead.fromJson(Map<String, dynamic> json) => Lead(
     id: json['id'] as String? ?? '',
@@ -228,22 +273,33 @@ class CallRecord {
     required this.title,
     required this.duration,
     required this.score,
+    this.calledAt,
+    this.leadId,
   });
 
   final String title;
   final Duration duration;
   final int score;
+  final DateTime? calledAt;
+  /// ID of the associated [Lead] — used to build the global call log.
+  final String? leadId;
 
   factory CallRecord.fromJson(Map<String, dynamic> json) => CallRecord(
     title: json['title'] as String? ?? '',
     duration: Duration(seconds: (json['duration_seconds'] as num?)?.toInt() ?? 0),
     score: (json['score'] as num?)?.toInt() ?? 0,
+    calledAt: json['called_at'] != null
+        ? DateTime.tryParse(json['called_at'] as String)
+        : null,
+    leadId: json['lead_id'] as String?,
   );
 
   Map<String, dynamic> toJson() => {
     'title': title,
     'duration_seconds': duration.inSeconds,
     'score': score,
+    'called_at': calledAt?.toIso8601String(),
+    'lead_id': leadId,
   };
 }
 
@@ -272,6 +328,8 @@ class FollowUpTask {
     required this.status,
     this.dueLabel,
     this.dueToday = false,
+    this.scheduledAt,
+    this.note,
   });
 
   final String id;
@@ -284,6 +342,34 @@ class FollowUpTask {
   final String? dueLabel;
   /// True when this task is due on today's date (used for tab filtering).
   final bool dueToday;
+  /// When the follow-up is scheduled — null means unscheduled.
+  final DateTime? scheduledAt;
+  /// Optional telecaller note saved alongside the scheduled call.
+  final String? note;
+
+  FollowUpTask copyWith({
+    String? id,
+    String? taskText,
+    String? leadName,
+    String? phone,
+    String? leadId,
+    FollowUpStatus? status,
+    String? dueLabel,
+    bool? dueToday,
+    DateTime? scheduledAt,
+    String? note,
+  }) => FollowUpTask(
+    id: id ?? this.id,
+    taskText: taskText ?? this.taskText,
+    leadName: leadName ?? this.leadName,
+    phone: phone ?? this.phone,
+    leadId: leadId ?? this.leadId,
+    status: status ?? this.status,
+    dueLabel: dueLabel ?? this.dueLabel,
+    dueToday: dueToday ?? this.dueToday,
+    scheduledAt: scheduledAt ?? this.scheduledAt,
+    note: note ?? this.note,
+  );
 
   factory FollowUpTask.fromJson(Map<String, dynamic> json) => FollowUpTask(
     id: json['id'] as String? ?? '',
@@ -294,6 +380,10 @@ class FollowUpTask {
     status: FollowUpStatusX.fromValue(json['status'] as String?),
     dueLabel: json['due_label'] as String?,
     dueToday: json['due_today'] as bool? ?? false,
+    scheduledAt: json['scheduled_at'] != null
+        ? DateTime.tryParse(json['scheduled_at'] as String)
+        : null,
+    note: json['note'] as String?,
   );
 
   Map<String, dynamic> toJson() => {
@@ -305,6 +395,8 @@ class FollowUpTask {
     'status': status.value,
     'due_label': dueLabel,
     'due_today': dueToday,
+    'scheduled_at': scheduledAt?.toIso8601String(),
+    'note': note,
   };
 }
 
@@ -321,6 +413,7 @@ class CallLogEntry {
     required this.score,
     required this.calledAt,
     this.isInbound = false,
+    this.leadId,
   });
 
   final String id;
@@ -332,6 +425,8 @@ class CallLogEntry {
   final int score;
   final DateTime calledAt;
   final bool isInbound;
+  /// Lead ID — used to navigate from call log to lead detail.
+  final String? leadId;
 
   factory CallLogEntry.fromJson(Map<String, dynamic> json) => CallLogEntry(
     id: json['id'] as String? ?? '',
@@ -343,6 +438,7 @@ class CallLogEntry {
     score: (json['score'] as num?)?.toInt() ?? 0,
     calledAt: _parseDate(json['called_at']),
     isInbound: json['is_inbound'] as bool? ?? false,
+    leadId: json['lead_id'] as String?,
   );
 
   Map<String, dynamic> toJson() => {
@@ -355,6 +451,7 @@ class CallLogEntry {
     'score': score,
     'called_at': calledAt.toIso8601String(),
     'is_inbound': isInbound,
+    'lead_id': leadId,
   };
 }
 

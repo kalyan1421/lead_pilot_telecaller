@@ -179,34 +179,34 @@ class CallTranscription {
   }
 }
 
-/// Uploads a captured [CallRecording] to the backend and waits for the
-/// speech-to-text result.
+/// Uploads a captured [CallRecording] to the Python backend and waits for
+/// the transcribe → analyse pipeline to finish.
 ///
-/// The backend runs Sarvam's **batch** API (async), so this is a two-step
-/// flow: `submit` returns a job id immediately, then we poll until the job is
-/// `done` or `failed`. Sarvam (model + key + cost) lives entirely server-side.
-///
-/// Backend contract:
-///   * `POST {baseUrl}/calls/transcribe` multipart (`audio`, `leadId`,
-///     `recordedAt`) → `202 { jobId, status }`.
-///   * `GET {baseUrl}/calls/transcribe/{jobId}` →
-///     `{ status, languageCode, transcript, transcriptEn, entries[] }`.
+/// Backend contract (FastAPI, port 8000):
+///   * `POST /api/calls/upload` multipart (`file`, `name`) → `{ call_id }`.
+///   * poll `GET /api/calls/{id}/processing-status` until `done`/`failed`.
+///   * `GET /api/calls/{id}/transcript` + `/lead-analysis` → assemble result.
 class TranscriptionService {
   const TranscriptionService();
 
   static const Duration _pollInterval = Duration(seconds: 3);
   static const Duration _pollTimeout = Duration(minutes: 5);
 
-  /// Submits the recording then polls until the transcript is ready.
+  /// [onProgress] is called on every poll tick with the backend's current
+  /// stage key (e.g. `"transcribe"`, `"analyse"`) and a 0–100 percent value.
   Future<CallTranscription> transcribe({
     required CallRecording recording,
     required String leadId,
+    void Function(String stage, int percent)? onProgress,
   }) async {
-    final jobId = await _submit(recording: recording, leadId: leadId);
-    return _pollUntilDone(jobId);
+    onProgress?.call('upload', 5);
+    final callId = await _upload(recording: recording, leadId: leadId);
+    onProgress?.call('upload', 20);
+    await _pollUntilProcessed(callId, onProgress: onProgress);
+    return _assemble(callId);
   }
 
-  Future<String> _submit({
+  Future<String> _upload({
     required CallRecording recording,
     required String leadId,
   }) async {
@@ -215,19 +215,18 @@ class TranscriptionService {
       throw ApiException('Recording file no longer exists: ${recording.path}');
     }
 
-    final uri = ApiConfig.uri(ApiEndpoints.transcribeCall);
+    final uri = ApiConfig.uri(ApiEndpoints.uploadRecording);
     final request = http.MultipartRequest('POST', uri)
-      ..fields['leadId'] = leadId
-      ..fields['recordedAt'] = recording.recordedAt.toIso8601String()
-      ..files.add(await http.MultipartFile.fromPath('audio', recording.path));
-
-    request.headers.addAll(ApiConfig.defaultHeaders..remove('Content-Type'));
+      // The backend slugifies `name` into the contact_key it keys analysis +
+      // memory by. Passing the lead id keeps this call grouped with the lead.
+      ..fields['name'] = leadId
+      ..files.add(await http.MultipartFile.fromPath('file', recording.path));
 
     http.StreamedResponse streamed;
     try {
       streamed = await request.send().timeout(ApiConfig.timeout);
     } catch (e) {
-      throw ApiException('Could not reach the transcription service.', cause: e);
+      throw ApiException('Could not reach the backend for upload.', cause: e);
     }
 
     final body = await streamed.stream.bytesToString();
@@ -240,21 +239,24 @@ class TranscriptionService {
 
     try {
       final decoded = jsonDecode(body) as Map<String, dynamic>;
-      final jobId = decoded['jobId']?.toString();
-      if (jobId == null || jobId.isEmpty) {
-        throw const ApiException('Backend did not return a job id.');
+      final callId = decoded['call_id']?.toString();
+      if (callId == null || callId.isEmpty) {
+        throw const ApiException('Backend did not return a call_id.');
       }
-      return jobId;
+      return callId;
     } on ApiException {
       rethrow;
     } catch (e) {
-      throw ApiException('Unexpected submit response.', cause: e);
+      throw ApiException('Unexpected upload response.', cause: e);
     }
   }
 
-  Future<CallTranscription> _pollUntilDone(String jobId) async {
+  Future<void> _pollUntilProcessed(
+    String callId, {
+    void Function(String stage, int percent)? onProgress,
+  }) async {
     final deadline = DateTime.now().add(_pollTimeout);
-    final uri = ApiConfig.uri(ApiEndpoints.transcribeJob(jobId));
+    final uri = ApiConfig.uri(ApiEndpoints.processingStatus(callId));
 
     while (true) {
       await Future<void>.delayed(_pollInterval);
@@ -285,20 +287,130 @@ class TranscriptionService {
         throw ApiException('Unexpected status response.', cause: e);
       }
 
-      switch (decoded['status']?.toString()) {
-        case 'done':
-          return CallTranscription.fromJson(decoded);
-        case 'failed':
-          throw ApiException(
-            decoded['error']?.toString() ?? 'Transcription failed.',
-          );
-        default:
-          if (DateTime.now().isAfter(deadline)) {
-            throw const ApiException(
-              'Transcription is taking too long. Please try again.',
-            );
-          }
+      if (decoded['failed'] == true) {
+        throw ApiException(
+          decoded['error']?.toString() ?? 'Transcription failed.',
+        );
+      }
+      final stage = decoded['current_stage']?.toString() ?? '';
+      final percent =
+          decoded['percent'] is num ? (decoded['percent'] as num).round() : 0;
+
+      onProgress?.call(stage, percent);
+
+      if (stage == 'done' || percent >= 100) return;
+
+      if (DateTime.now().isAfter(deadline)) {
+        throw const ApiException(
+          'Transcription is taking too long. Please try again.',
+        );
       }
     }
+  }
+
+  /// Fetch the stored transcript + analysis and shape them into a
+  /// [CallTranscription]. Lead analysis is best-effort (tolerates a 404 if the
+  /// analyse stage produced nothing).
+  Future<CallTranscription> _assemble(String callId) async {
+    final tBody = await _getJson(ApiEndpoints.transcript(callId));
+    final transcript = tBody['transcript'] is Map<String, dynamic>
+        ? tBody['transcript'] as Map<String, dynamic>
+        : const <String, dynamic>{};
+    final turns = transcript['turns'];
+
+    final entries = <Map<String, dynamic>>[
+      if (turns is List)
+        for (final t in turns.whereType<Map<String, dynamic>>())
+          {
+            'speakerId':
+                (t['role']?.toString().toUpperCase() == 'AGENT') ? '0' : '1',
+            'text': (t['content'] ?? t['text'] ?? '').toString(),
+          },
+    ];
+
+    Map<String, dynamic> analysis = const {};
+    try {
+      analysis = await _getJson(ApiEndpoints.leadAnalysis(callId));
+    } catch (_) {/* analysis not ready — render transcript only */}
+
+    return CallTranscription.fromJson({
+      'transcript': transcript['full_text'] ?? '',
+      'languageCode': transcript['language'],
+      'entries': entries,
+      'analysis': analysis.isEmpty ? null : _mapAnalysis(analysis),
+    });
+  }
+
+  Future<Map<String, dynamic>> _getJson(String path) async {
+    final res = await http
+        .get(ApiConfig.uri(path), headers: ApiConfig.defaultHeaders)
+        .timeout(ApiConfig.timeout);
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw ApiException('GET $path failed (${res.statusCode}).',
+          statusCode: res.statusCode);
+    }
+    final decoded = jsonDecode(res.body);
+    return decoded is Map<String, dynamic> ? decoded : const {};
+  }
+
+  /// Maps the FastAPI `lead-analysis` payload (snake_case) into the camelCase
+  /// shape [CallAnalysis.fromJson] expects.
+  Map<String, dynamic> _mapAnalysis(Map<String, dynamic> la) {
+    int pct(Object? v) => v is num ? v.round() : 0;
+    final debrief = la['agent_debrief'] is Map<String, dynamic>
+        ? la['agent_debrief'] as Map<String, dynamic>
+        : const <String, dynamic>{};
+    final summary = la['call_summary'] is Map<String, dynamic>
+        ? la['call_summary'] as Map<String, dynamic>
+        : const <String, dynamic>{};
+    final nextAction = la['next_action'] is Map<String, dynamic>
+        ? la['next_action'] as Map<String, dynamic>
+        : const <String, dynamic>{};
+
+    return {
+      'summary': (summary['headline'] ?? la['lead_verdict_reason'] ?? '').toString(),
+      'keyPoints': la['key_points'] is List ? la['key_points'] : const [],
+      'nextSteps': [
+        if (la['next_steps'] is List)
+          for (final s in (la['next_steps'] as List).whereType<Map>())
+            {
+              'title': (s['text'] ?? '').toString(),
+              'action': (s['action_label'] ?? 'Note').toString(),
+            },
+      ],
+      'scores': {
+        'overall': pct(debrief['total_score']),
+        'telecaller': pct(debrief['total_score']),
+        'leadQuality': pct(la['bant_score']),
+        'sentiment': _sentimentPct(la['sentiment_arc']),
+      },
+      'breakdown': [
+        {'label': 'Opening', 'score': pct(debrief['opening_score']), 'note': ''},
+        {'label': 'Discovery', 'score': pct(debrief['discovery_score']), 'note': ''},
+        {'label': 'Pitch', 'score': pct(debrief['pitch_score']), 'note': ''},
+        {
+          'label': 'Objection Handling',
+          'score': pct(debrief['objection_handling_score']),
+          'note': '',
+        },
+        {'label': 'Closing', 'score': pct(debrief['closing_score']), 'note': ''},
+      ],
+      'sentimentNote': (summary['overall_tone'] ?? '').toString(),
+      'followUpSuggestion':
+          (nextAction['follow_up_script'] ?? nextAction['recommended_action'] ?? '')
+              .toString(),
+    };
+  }
+
+  /// Averages a sentiment arc (per-turn scores in roughly -1..1) into a 0–100.
+  int _sentimentPct(Object? arc) {
+    if (arc is! List || arc.isEmpty) return 0;
+    final scores = <double>[
+      for (final t in arc.whereType<Map>())
+        if (t['score'] is num) (t['score'] as num).toDouble(),
+    ];
+    if (scores.isEmpty) return 0;
+    final avg = scores.reduce((a, b) => a + b) / scores.length;
+    return (((avg + 1) / 2) * 100).clamp(0, 100).round();
   }
 }

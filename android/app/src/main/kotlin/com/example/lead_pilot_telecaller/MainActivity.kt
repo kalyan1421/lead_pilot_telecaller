@@ -21,6 +21,16 @@ class MainActivity : FlutterActivity() {
                         val leadId = call.argument<String>("leadId").orEmpty()
                         val leadName = call.argument<String>("leadName").orEmpty()
                         val phoneNumber = call.argument<String>("phoneNumber")
+                        val leadScore = call.argument<Int>("leadScore") ?: 0
+                        val temperature = call.argument<String>("temperature").orEmpty()
+                        val intent = call.argument<String>("intent").orEmpty()
+                        val scriptOpeningLine = call.argument<String>("scriptOpeningLine").orEmpty()
+                        @Suppress("UNCHECKED_CAST")
+                        val memoryFacts = (call.argument<List<*>>("memoryFacts") ?: emptyList<String>())
+                            .filterIsInstance<String>()
+                        val lastCallTs = call.argument<String>("lastCallTs").orEmpty()
+                        val lastCallScore = call.argument<Int>("lastCallScore") ?: 0
+                        val lastCallSummary = call.argument<String>("lastCallSummary").orEmpty()
 
                         if (phoneNumber.isNullOrBlank()) {
                             result.success(
@@ -32,7 +42,14 @@ class MainActivity : FlutterActivity() {
                             return@setMethodCallHandler
                         }
 
-                        result.success(startCallWithNotesBubble(leadId, leadName, phoneNumber))
+                        result.success(
+                            startCallWithNotesBubble(
+                                leadId, leadName, phoneNumber,
+                                leadScore, temperature, intent,
+                                scriptOpeningLine, memoryFacts,
+                                lastCallTs, lastCallScore, lastCallSummary,
+                            )
+                        )
                     }
 
                     "getCallNotes" -> {
@@ -65,6 +82,14 @@ class MainActivity : FlutterActivity() {
         leadId: String,
         leadName: String,
         phoneNumber: String,
+        leadScore: Int = 0,
+        temperature: String = "",
+        intent: String = "",
+        scriptOpeningLine: String = "",
+        memoryFacts: List<String> = emptyList(),
+        lastCallTs: String = "",
+        lastCallScore: Int = 0,
+        lastCallSummary: String = "",
     ): Map<String, Any> {
         if (!hasOverlayPermission()) {
             openOverlayPermissionSettings()
@@ -78,6 +103,17 @@ class MainActivity : FlutterActivity() {
             putExtra(CallNotesOverlayService.EXTRA_LEAD_ID, leadId)
             putExtra(CallNotesOverlayService.EXTRA_LEAD_NAME, leadName)
             putExtra(CallNotesOverlayService.EXTRA_PHONE_NUMBER, phoneNumber)
+            putExtra(CallNotesOverlayService.EXTRA_LEAD_SCORE, leadScore)
+            putExtra(CallNotesOverlayService.EXTRA_TEMPERATURE, temperature)
+            putExtra(CallNotesOverlayService.EXTRA_INTENT, intent)
+            putExtra(CallNotesOverlayService.EXTRA_SCRIPT_OPENING, scriptOpeningLine)
+            putStringArrayListExtra(
+                CallNotesOverlayService.EXTRA_MEMORY_FACTS,
+                ArrayList(memoryFacts),
+            )
+            putExtra(CallNotesOverlayService.EXTRA_LAST_CALL_TS, lastCallTs)
+            putExtra(CallNotesOverlayService.EXTRA_LAST_CALL_SCORE, lastCallScore)
+            putExtra(CallNotesOverlayService.EXTRA_LAST_CALL_SUMMARY, lastCallSummary)
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

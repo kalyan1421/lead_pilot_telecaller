@@ -23,8 +23,16 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   String _filter = 'All';
+  final _searchController = TextEditingController();
+  String _query = '';
 
   static const _filters = ['All', 'High Intent', 'New', 'Follow-up', 'Cold'];
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   List<Lead> _applyFilter(List<Lead> all) => switch (_filter) {
     'High Intent' =>
@@ -39,10 +47,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     _ => all,
   };
 
+  List<Lead> _applySearch(List<Lead> all) {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return all;
+    return all
+        .where((l) =>
+            l.name.toLowerCase().contains(q) ||
+            l.phone.toLowerCase().contains(q) ||
+            l.intent.toLowerCase().contains(q))
+        .toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     final leads = ref.watch(leadsProvider);
-    final filtered = _applyFilter(leads);
+    final filtered = _applySearch(_applyFilter(leads));
 
     return Scaffold(
       backgroundColor: AppColors.springWood,
@@ -60,58 +79,38 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   // ── Header ────────────────────────────────────────────────────────────────
 
   Widget _buildHeader(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 14, 20, 19),
-      decoration: const BoxDecoration(
-        color: AppColors.white,
-        border: Border(bottom: BorderSide(color: AppColors.westar)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          // Greeting + title
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return LpTabHeader(
+      title: 'Your Leads',
+      subtitle: 'Good morning',
+      actions: [
+        // Bell → notification centre, with an unread dot.
+        TapScale(
+          onTap: () => context.push('/notifications'),
+          child: SizedBox(
+            width: 40,
+            height: 40,
+            child: Stack(
+              clipBehavior: Clip.none,
               children: [
-                Text(
-                  'Good morning',
-                  style: AppText.body13.copyWith(
-                    color: AppColors.schooner,
-                    fontWeight: FontWeight.w500,
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: AppColors.pampas,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: AppColors.westar),
+                  ),
+                  child: const Center(
+                    child: Icon(
+                      Icons.notifications_outlined,
+                      size: 18,
+                      color: AppColors.merlin,
+                    ),
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text('Your Leads', style: AppText.display24),
-              ],
-            ),
-          ),
-          const SizedBox(width: 17),
-          // Bell button with notification dot
-          TapScale(
-            onTap: () {},
-            child: SizedBox(
-              width: 40,
-              height: 40,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: AppColors.pampas,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: AppColors.westar),
-                    ),
-                    child: const Center(
-                      child: Icon(
-                        Icons.notifications_outlined,
-                        size: 18,
-                        color: AppColors.merlin,
-                      ),
-                    ),
-                  ),
+                if (ref.watch(followUpsProvider).any(
+                  (t) => t.status != FollowUpStatus.done,
+                ))
                   Positioned(
                     right: 9,
                     top: 9,
@@ -125,29 +124,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       ),
                     ),
                   ),
-                ],
-              ),
+              ],
             ),
           ),
-          const SizedBox(width: 17),
-          // Add FAB
-          TapScale(
-            onTap: () => context.push('/outbound/add'),
-            child: Container(
-              width: 52,
-              height: 52,
-              decoration: BoxDecoration(
-                color: AppColors.blueRibbon,
-                borderRadius: BorderRadius.circular(AppRadius.lg),
-                boxShadow: AppShadows.blueAction,
-              ),
-              child: const Center(
-                child: Icon(Icons.add, color: AppColors.white, size: 24),
-              ),
+        ),
+        // Add lead.
+        TapScale(
+          onTap: () => context.push('/outbound/add'),
+          child: Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: AppColors.blueRibbon,
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              boxShadow: AppShadows.blueAction,
+            ),
+            child: const Center(
+              child: Icon(Icons.add, color: AppColors.white, size: 24),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -156,32 +153,47 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget _buildScrollBody(BuildContext context, List<Lead> leads) {
     return CustomScrollView(
       slivers: [
-        // Stats row
+        // Stats row — computed from real data.
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-            child: Row(
-              children: const [
-                Expanded(
-                  child: _StatTile(
-                    icon: Icons.call_outlined,
-                    label: 'Calls Today',
-                    value: '24',
-                    change: '+12%',
+            child: Builder(builder: (_) {
+              final callLog = ref.watch(callLogProvider);
+              final now = DateTime.now();
+              final callsToday = callLog
+                  .where((e) =>
+                      e.calledAt.year == now.year &&
+                      e.calledAt.month == now.month &&
+                      e.calledAt.day == now.day)
+                  .length;
+              final scored =
+                  ref.watch(leadsProvider).where((l) => l.score > 0).toList();
+              final avgScore = scored.isEmpty
+                  ? null
+                  : scored.map((l) => l.score).reduce((a, b) => a + b) ~/
+                      scored.length;
+              return Row(
+                children: [
+                  Expanded(
+                    child: _StatTile(
+                      icon: Icons.call_outlined,
+                      label: 'Calls Today',
+                      value: '$callsToday',
+                    ),
                   ),
-                ),
-                SizedBox(width: 10),
-                Expanded(
-                  child: _StatTile(
-                    icon: Icons.show_chart,
-                    label: 'Avg Score',
-                    value: '86',
-                    valueColor: AppColors.blueRibbon,
-                    suffix: '/100',
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _StatTile(
+                      icon: Icons.show_chart,
+                      label: 'Avg Score',
+                      value: avgScore?.toString() ?? '—',
+                      valueColor: AppColors.blueRibbon,
+                      suffix: avgScore == null ? null : '/100',
+                    ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              );
+            }),
           ),
         ),
         // Search bar
@@ -241,11 +253,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   // ── Search bar ─────────────────────────────────────────────────────────────
 
   Widget _buildSearchBar() {
+    final filterActive = _filter != 'All';
     return Row(
       children: [
         Expanded(
           child: Container(
             height: 44,
+            padding: const EdgeInsets.only(left: 12, right: 6),
             decoration: BoxDecoration(
               color: AppColors.white,
               borderRadius: BorderRadius.circular(AppRadius.lg),
@@ -253,54 +267,159 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
             child: Row(
               children: [
-                const SizedBox(width: 12),
                 const Icon(Icons.search, size: 16, color: AppColors.schooner),
                 const SizedBox(width: 9),
-                Text(
-                  'Search leads...',
-                  style: AppText.body14.copyWith(
-                    color: AppColors.boulder,
-                    fontWeight: FontWeight.w400,
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    onChanged: (v) => setState(() => _query = v),
+                    textInputAction: TextInputAction.search,
+                    style: AppText.body14.copyWith(color: AppColors.zeus),
+                    decoration: InputDecoration(
+                      isCollapsed: true,
+                      border: InputBorder.none,
+                      hintText: 'Search leads...',
+                      hintStyle: AppText.body14.copyWith(
+                        color: AppColors.boulder,
+                      ),
+                    ),
                   ),
                 ),
+                if (_query.isNotEmpty)
+                  GestureDetector(
+                    onTap: () {
+                      _searchController.clear();
+                      setState(() => _query = '');
+                    },
+                    child: const Icon(Icons.close,
+                        size: 16, color: AppColors.schooner),
+                  ),
               ],
             ),
           ),
         ),
         const SizedBox(width: AppSpacing.xs),
-        // Filter button with blue active-dot
-        SizedBox(
-          width: 44,
-          height: 44,
-          child: Stack(
-            children: [
-              Container(
-                decoration: BoxDecoration(
-                  color: AppColors.white,
-                  borderRadius: BorderRadius.circular(AppRadius.lg),
-                  border: Border.all(color: AppColors.westar),
-                ),
-                child: const Center(
-                  child: Icon(Icons.tune, size: 18, color: AppColors.merlin),
-                ),
-              ),
-              Positioned(
-                right: 8,
-                top: 8,
-                child: Container(
-                  width: 7,
-                  height: 7,
+        // Filter button — opens the filter sheet; dot shows when a filter is on.
+        TapScale(
+          onTap: _openFilterSheet,
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: Stack(
+              children: [
+                Container(
                   decoration: BoxDecoration(
-                    color: AppColors.blueRibbon,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: AppColors.white, width: 1),
+                    color: filterActive ? AppColors.blueRibbon : AppColors.white,
+                    borderRadius: BorderRadius.circular(AppRadius.lg),
+                    border: Border.all(
+                      color: filterActive
+                          ? AppColors.blueRibbon
+                          : AppColors.westar,
+                    ),
+                  ),
+                  child: Center(
+                    child: Icon(
+                      Icons.tune,
+                      size: 18,
+                      color: filterActive ? AppColors.white : AppColors.merlin,
+                    ),
                   ),
                 ),
-              ),
-            ],
+                if (filterActive)
+                  Positioned(
+                    right: 8,
+                    top: 8,
+                    child: Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: AppColors.white,
+                        shape: BoxShape.circle,
+                        border:
+                            Border.all(color: AppColors.blueRibbon, width: 1),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ],
+    );
+  }
+
+  Future<void> _openFilterSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 18),
+                  decoration: BoxDecoration(
+                    color: AppColors.westar,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Text('Filter leads', style: AppText.display20.copyWith(fontSize: 18)),
+              const SizedBox(height: 14),
+              for (final f in _filters)
+                TapScale(
+                  onTap: () {
+                    setState(() => _filter = f);
+                    Navigator.of(sheetContext).pop();
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                    decoration: BoxDecoration(
+                      color: f == _filter
+                          ? AppColors.ribbonSurface
+                          : AppColors.pampas,
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                      border: Border.all(
+                        color: f == _filter
+                            ? AppColors.blueRibbon
+                            : AppColors.westar,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            f,
+                            style: AppText.body14.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: f == _filter
+                                  ? AppColors.blueRibbon
+                                  : AppColors.zeus,
+                            ),
+                          ),
+                        ),
+                        if (f == _filter)
+                          const Icon(Icons.check,
+                              size: 18, color: AppColors.blueRibbon),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -363,7 +482,6 @@ class _StatTile extends StatelessWidget {
     required this.value,
     this.valueColor = AppColors.zeus,
     this.suffix,
-    this.change,
   });
 
   final IconData icon;
@@ -371,7 +489,6 @@ class _StatTile extends StatelessWidget {
   final String value;
   final Color valueColor;
   final String? suffix;
-  final String? change;
 
   @override
   Widget build(BuildContext context) {
@@ -414,17 +531,6 @@ class _StatTile extends StatelessWidget {
                   color: valueColor,
                 ),
               ),
-              if (change != null) ...[
-                const SizedBox(width: 6),
-                Text(
-                  change!,
-                  style: AppText.body13.copyWith(
-                    color: AppColors.salem,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
               if (suffix != null) ...[
                 const SizedBox(width: 4),
                 Text(
@@ -573,7 +679,7 @@ class _LeadTile extends ConsumerWidget {
                   // Call button — taps go directly to caller selector
                   GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onTap: () => _startQuickCall(context),
+                    onTap: () => _startQuickCall(context, ref),
                     child: Container(
                       width: 40,
                       height: 40,
@@ -606,11 +712,20 @@ class _LeadTile extends ConsumerWidget {
     );
   }
 
-  Future<void> _startQuickCall(BuildContext context) async {
+  Future<void> _startQuickCall(BuildContext context, WidgetRef ref) async {
+    final lastCall = lead.history.isNotEmpty ? lead.history.first : null;
     final result = await startCallWithNotesBubble(
       leadId: lead.id,
       leadName: lead.name,
       phoneNumber: lead.phone,
+      leadScore: lead.score,
+      temperature: lead.temperature.value,
+      intent: lead.intent,
+      scriptOpeningLine: lead.script.openingLine,
+      memoryFacts: lead.memory.take(4).map((m) => m.text).toList(),
+      lastCallTs: lastCall?.calledAt?.toIso8601String() ?? '',
+      lastCallScore: lastCall?.score ?? 0,
+      lastCallSummary: lastCall?.title ?? '',
     );
     if (!context.mounted) return;
 
@@ -631,7 +746,11 @@ class _LeadTile extends ConsumerWidget {
           content: Text('No calling app available on this device.'),
         ),
       );
+      return;
     }
+
+    // The call is on its way out — log it so it shows in Calls + history.
+    await recordOutboundCall(ref, lead);
   }
 
   String _timeStamp() {
