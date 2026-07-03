@@ -13,6 +13,8 @@ import '../theme/app_theme.dart';
 import '../widgets/edit_lead_sheet.dart';
 import '../widgets/leadpilot_widgets.dart';
 import '../widgets/schedule_call_sheet.dart';
+import '../widgets/upload_recording_sheet.dart';
+import 'call_detail_screen.dart';
 
 class LeadDetailScreen extends ConsumerWidget {
   const LeadDetailScreen({super.key, required this.leadId});
@@ -121,7 +123,13 @@ class LeadDetailScreen extends ConsumerWidget {
           const AppGap.md(),
           MemoryPanel(lead: lead),
           const AppGap.md(),
-          CallHistoryPanel(leadId: lead.id, history: mergedHistory),
+          CallHistoryPanel(
+            leadId: lead.id,
+            leadName: lead.name,
+            history: mergedHistory,
+            onUploadRecording: () =>
+                UploadRecordingSheet.show(context, lead),
+          ),
         ],
       ),
     );
@@ -374,11 +382,15 @@ class CallHistoryPanel extends StatelessWidget {
   const CallHistoryPanel({
     super.key,
     required this.leadId,
+    required this.leadName,
     required this.history,
+    this.onUploadRecording,
   });
 
   final String leadId;
+  final String leadName;
   final List<CallRecord> history;
+  final VoidCallback? onUploadRecording;
 
   @override
   Widget build(BuildContext context) {
@@ -388,7 +400,7 @@ class CallHistoryPanel extends StatelessWidget {
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            padding: const EdgeInsets.fromLTRB(16, 10, 10, 10),
             child: Row(
               children: [
                 Expanded(
@@ -397,11 +409,30 @@ class CallHistoryPanel extends StatelessWidget {
                     style: AppText.label11,
                   ),
                 ),
-                const Icon(
-                  Icons.expand_more,
-                  size: 16,
-                  color: AppColors.schooner,
-                ),
+                if (onUploadRecording != null)
+                  Tooltip(
+                    message: 'Upload recording',
+                    child: InkWell(
+                      onTap: onUploadRecording,
+                      borderRadius: BorderRadius.circular(6),
+                      child: Padding(
+                        padding: const EdgeInsets.all(6),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.upload_file,
+                                size: 15, color: AppColors.blueRibbon),
+                            const SizedBox(width: 4),
+                            Text('Upload',
+                                style: AppText.caption11.copyWith(
+                                  color: AppColors.blueRibbon,
+                                  fontWeight: FontWeight.w700,
+                                )),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -418,7 +449,19 @@ class CallHistoryPanel extends StatelessWidget {
             Column(
               children: [
                 InkWell(
-                  onTap: () => context.push('/leads/$leadId/post-call'),
+                  // A call with a stored call_id has its own transcript/
+                  // analysis on the backend — open that specific call.
+                  // Calls with no call_id yet (just placed, not captured/
+                  // uploaded) fall back to the live-capture screen.
+                  onTap: () => history[i].callId != null
+                      ? context.push(
+                          '/leads/$leadId/calls/${history[i].callId}',
+                          extra: CallDetailArgs(
+                            leadName: leadName,
+                            calledAt: history[i].calledAt,
+                          ),
+                        )
+                      : context.push('/leads/$leadId/post-call'),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,

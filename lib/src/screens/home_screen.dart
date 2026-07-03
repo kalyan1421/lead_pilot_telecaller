@@ -62,6 +62,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     final leads = ref.watch(leadsProvider);
     final filtered = _applySearch(_applyFilter(leads));
+    final usingFallback = ref.watch(leadsUsingFallbackProvider);
 
     return Scaffold(
       backgroundColor: AppColors.springWood,
@@ -69,6 +70,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         child: Column(
           children: [
             _buildHeader(context),
+            if (usingFallback)
+              LpFallbackBanner(
+                onRetry: () => ref.read(leadsProvider.notifier).refresh(),
+              ),
             Expanded(child: _buildScrollBody(context, filtered)),
           ],
         ),
@@ -156,7 +161,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         // Stats row — computed from real data.
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, 0),
             child: Builder(builder: (_) {
               final callLog = ref.watch(callLogProvider);
               final now = DateTime.now();
@@ -181,7 +186,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       value: '$callsToday',
                     ),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: _StatTile(
                       icon: Icons.show_chart,
@@ -199,14 +204,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         // Search bar
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+            padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, 0),
             child: _buildSearchBar(),
           ),
         ),
         // Filter chips
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.only(top: 12),
+            padding: const EdgeInsets.only(top: AppSpacing.sm),
             child: _buildFilterChips(),
           ),
         ),
@@ -218,7 +223,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(Icons.inbox_outlined, size: 40, color: AppColors.tide),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: AppSpacing.xs),
                   Text(
                     _filter == 'All' ? 'No leads yet' : 'No $_filter leads',
                     style: AppText.body14.copyWith(
@@ -226,7 +231,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: AppSpacing.xxs),
                   Text(
                     _filter == 'All'
                         ? 'Tap + to add your first lead'
@@ -239,10 +244,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           )
         else
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 100),
+            padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 100),
             sliver: SliverList.separated(
               itemCount: leads.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 12),
+              separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.sm),
               itemBuilder: (_, i) => _LeadTile(lead: leads[i]),
             ),
           ),
@@ -259,7 +264,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         Expanded(
           child: Container(
             height: 44,
-            padding: const EdgeInsets.only(left: 12, right: 6),
+            padding: const EdgeInsets.only(left: AppSpacing.sm, right: AppSpacing.xs),
             decoration: BoxDecoration(
               color: AppColors.white,
               borderRadius: BorderRadius.circular(AppRadius.lg),
@@ -268,7 +273,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             child: Row(
               children: [
                 const Icon(Icons.search, size: 16, color: AppColors.schooner),
-                const SizedBox(width: 9),
+                const SizedBox(width: AppSpacing.xs),
                 Expanded(
                   child: TextField(
                     controller: _searchController,
@@ -357,7 +362,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
       builder: (sheetContext) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+          padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, AppSpacing.xl),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -366,7 +371,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 child: Container(
                   width: 36,
                   height: 4,
-                  margin: const EdgeInsets.only(bottom: 18),
+                  margin: const EdgeInsets.only(bottom: AppSpacing.lg),
                   decoration: BoxDecoration(
                     color: AppColors.westar,
                     borderRadius: BorderRadius.circular(2),
@@ -374,7 +379,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
               ),
               Text('Filter leads', style: AppText.display20.copyWith(fontSize: 18)),
-              const SizedBox(height: 14),
+              const SizedBox(height: AppSpacing.md),
               for (final f in _filters)
                 TapScale(
                   onTap: () {
@@ -382,9 +387,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     Navigator.of(sheetContext).pop();
                   },
                   child: Container(
-                    margin: const EdgeInsets.only(bottom: 8),
+                    margin: const EdgeInsets.only(bottom: AppSpacing.xs),
                     padding:
-                        const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                        const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
                     decoration: BoxDecoration(
                       color: f == _filter
                           ? AppColors.ribbonSurface
@@ -430,7 +435,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       height: 38,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
+        padding: const EdgeInsets.fromLTRB(AppSpacing.md, 2, AppSpacing.md, 2),
         itemCount: _filters.length,
         separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.xs),
         itemBuilder: (_, i) {
@@ -440,7 +445,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             onTap: () => setState(() => _filter = f),
             child: Container(
               height: 34,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
               decoration: BoxDecoration(
                 color: active ? AppColors.blueRibbon : AppColors.white,
                 borderRadius: BorderRadius.circular(AppRadius.pill),
@@ -493,7 +498,7 @@ class _StatTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(15),
+      padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: AppColors.white,
         borderRadius: BorderRadius.circular(AppRadius.lg),
@@ -507,7 +512,7 @@ class _StatTile extends StatelessWidget {
           Row(
             children: [
               Icon(icon, size: 11, color: AppColors.schooner),
-              const SizedBox(width: 6),
+              const SizedBox(width: AppSpacing.xs),
               Expanded(
                 child: Text(
                   label.toUpperCase(),
@@ -517,7 +522,7 @@ class _StatTile extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: AppSpacing.xs),
           // Value row with optional change/suffix
           Row(
             crossAxisAlignment: CrossAxisAlignment.baseline,
@@ -532,7 +537,7 @@ class _StatTile extends StatelessWidget {
                 ),
               ),
               if (suffix != null) ...[
-                const SizedBox(width: 4),
+                const SizedBox(width: AppSpacing.xxs),
                 Text(
                   suffix!,
                   style: AppText.body13.copyWith(
@@ -583,8 +588,8 @@ class _LeadTile extends ConsumerWidget {
                 child: Container(
                   width: 140,
                   height: 140,
-                  decoration: const BoxDecoration(
-                    color: Color(0x121E4AFF),
+                  decoration: BoxDecoration(
+                    color: AppColors.blueRibbon.withAlpha(0x12),
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -592,12 +597,12 @@ class _LeadTile extends ConsumerWidget {
             ),
             // Card content
             Padding(
-              padding: const EdgeInsets.all(17),
+              padding: const EdgeInsets.all(AppSpacing.md),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   ScoreRing(score: lead.score, size: 52),
-                  const SizedBox(width: 14),
+                  const SizedBox(width: AppSpacing.md),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -617,7 +622,7 @@ class _LeadTile extends ConsumerWidget {
                               size: 11,
                               color: AppColors.schooner,
                             ),
-                            const SizedBox(width: 5),
+                            const SizedBox(width: AppSpacing.xxs),
                             Text(
                               lead.phone,
                               style: AppText.mono(
@@ -627,7 +632,7 @@ class _LeadTile extends ConsumerWidget {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: AppSpacing.xs),
                         // Intent + Source pills
                         Wrap(
                           spacing: 5,
@@ -649,7 +654,7 @@ class _LeadTile extends ConsumerWidget {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: AppSpacing.xs),
                         // Timestamp · topic
                         Row(
                           children: [
@@ -658,7 +663,7 @@ class _LeadTile extends ConsumerWidget {
                               size: 11,
                               color: AppColors.tide,
                             ),
-                            const SizedBox(width: 5),
+                            const SizedBox(width: AppSpacing.xxs),
                             Expanded(
                               child: Text(
                                 _timeStamp(),
@@ -675,7 +680,7 @@ class _LeadTile extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: AppSpacing.sm),
                   // Call button — taps go directly to caller selector
                   GestureDetector(
                     behavior: HitTestBehavior.opaque,

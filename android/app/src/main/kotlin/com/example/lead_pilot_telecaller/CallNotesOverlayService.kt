@@ -567,8 +567,33 @@ class CallNotesOverlayService : Service() {
         } catch (_: Exception) { isoTs }
     }
 
+    /// windowManager.addView() can throw even after MainActivity's upfront
+    /// permission check passed — the permission can be revoked mid-call (user
+    /// toggles it in Settings, OEM battery-saver, an OS update), and this is
+    /// called again later for the call-ended bubble / expanded panel, not just
+    /// at start. Previously unguarded: any throw here crashed the whole
+    /// service silently — the app kept working (the dialer had already been
+    /// launched separately), so the only visible symptom was "no overlay,
+    /// no error, no idea why." Guard it and tell the user via a Toast, which
+    /// (unlike this overlay) doesn't need SYSTEM_ALERT_WINDOW to display.
     private fun attachOverlay(view: View, params: WindowManager.LayoutParams) {
-        removeOverlay(); overlayView = view; layoutParams = params; windowManager.addView(view, params)
+        removeOverlay()
+        try {
+            windowManager.addView(view, params)
+            overlayView = view
+            layoutParams = params
+        } catch (_: Exception) {
+            overlayView = null
+            layoutParams = null
+            mainHandler.post {
+                Toast.makeText(
+                    this,
+                    "Couldn't show the call notes overlay — check \"Display over other apps\" permission for LeadPilot.",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+            stopSelf()
+        }
     }
 
     private fun removeOverlay() {
@@ -581,7 +606,7 @@ class CallNotesOverlayService : Service() {
         handle.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> { startX = params.x; startY = params.y; startRawX = event.rawX; startRawY = event.rawY; moved = false; true }
-                MotionEvent.ACTION_MOVE -> { val dx = (event.rawX - startRawX).toInt(); val dy = (event.rawY - startRawY).toInt(); if (kotlin.math.abs(dx) > dp(4) || kotlin.math.abs(dy) > dp(4)) moved = true; params.x = startX + dx; params.y = startY + dy; overlayView?.let { windowManager.updateViewLayout(it, params) }; true }
+                MotionEvent.ACTION_MOVE -> { val dx = (event.rawX - startRawX).toInt(); val dy = (event.rawY - startRawY).toInt(); if (kotlin.math.abs(dx) > dp(4) || kotlin.math.abs(dy) > dp(4)) moved = true; params.x = startX + dx; params.y = startY + dy; overlayView?.let { try { windowManager.updateViewLayout(it, params) } catch (_: Exception) {} }; true }
                 MotionEvent.ACTION_UP -> { if (!moved) { v.performClick(); onClick?.invoke() }; true }
                 else -> false
             }

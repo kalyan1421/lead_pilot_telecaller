@@ -33,6 +33,23 @@ class _AddOutboundLeadScreenState extends ConsumerState<AddOutboundLeadScreen> {
   String? _verdict;
   List<String> _keyPoints = const [];
   bool _saving = false;
+  DateTime _callDate = DateTime.now();
+
+  String _fmtDate(DateTime d) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return '${d.day} ${months[d.month - 1]} ${d.year}';
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _callDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) setState(() => _callDate = picked);
+  }
 
   // ── Recording upload → transcript ────────────────────────────────────────
 
@@ -40,6 +57,14 @@ class _AddOutboundLeadScreenState extends ConsumerState<AddOutboundLeadScreen> {
     if (_phase == _UploadPhase.uploading || _phase == _UploadPhase.processing) {
       return; // already in flight
     }
+
+    // Name must be filled before upload so the call links to the right lead.
+    final draftCheck = ref.read(outboundLeadDraftProvider);
+    if (draftCheck.name.trim().isEmpty) {
+      _toast('Enter lead name before uploading a recording');
+      return;
+    }
+
     final picked = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['mp3', 'wav', 'm4a', 'ogg', 'mpeg', 'mp4'],
@@ -62,9 +87,10 @@ class _AddOutboundLeadScreenState extends ConsumerState<AddOutboundLeadScreen> {
     try {
       final callId = await repo.uploadRecording(
         File(path),
-        name: draft.name.trim().isNotEmpty ? draft.name.trim() : _fileName,
+        name: draft.name.trim(),
         phone: draft.phone.trim().isEmpty ? null : draft.phone.trim(),
         source: draft.source.trim().isEmpty ? null : draft.source.trim(),
+        callDate: _callDate,
       );
       if (!mounted) return;
       setState(() {
@@ -82,7 +108,7 @@ class _AddOutboundLeadScreenState extends ConsumerState<AddOutboundLeadScreen> {
         },
       );
 
-      final turns = await repo.transcript(callId);
+      final turns = (await repo.transcript(callId)).turns;
       final analysis = await repo.leadAnalysis(callId);
       if (!mounted) return;
       setState(() {
@@ -141,7 +167,15 @@ class _AddOutboundLeadScreenState extends ConsumerState<AddOutboundLeadScreen> {
 
   Future<void> _saveLead() async {
     final key = await _createLead();
-    if (key != null && mounted) context.pop();
+    if (key != null && mounted) {
+      if (_phase == _UploadPhase.done) {
+        // Recording was uploaded — jump straight to lead detail so the
+        // call appears in the history without an extra navigation step.
+        context.go('/leads/$key');
+      } else {
+        context.pop();
+      }
+    }
   }
 
   Future<void> _saveAndCall() async {
@@ -299,6 +333,35 @@ class _AddOutboundLeadScreenState extends ConsumerState<AddOutboundLeadScreen> {
                           fileName: _fileName,
                           stageLabel: _stageLabel,
                           onTap: busy ? null : _pickAndUpload,
+                        ),
+                      ),
+                      const AppGap.md(),
+                      FormShell(
+                        label: 'Recording Date',
+                        optionalText: '(when was this call?)',
+                        child: GestureDetector(
+                          onTap: busy ? null : _pickDate,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 15, vertical: 13),
+                            decoration: BoxDecoration(
+                              color: AppColors.pampas,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: AppColors.westar),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.calendar_today_outlined,
+                                    size: 16, color: AppColors.schooner),
+                                const AppGap.sm(axis: Axis.horizontal),
+                                Text(_fmtDate(_callDate),
+                                    style: AppText.body14),
+                                const Spacer(),
+                                const Icon(Icons.keyboard_arrow_down,
+                                    size: 16, color: AppColors.schooner),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
                       if (_phase == _UploadPhase.done) ...[

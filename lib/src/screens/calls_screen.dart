@@ -84,6 +84,11 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
               ],
             ),
 
+            if (ref.watch(leadsUsingFallbackProvider))
+              LpFallbackBanner(
+                onRetry: () => ref.read(leadsProvider.notifier).refresh(),
+              ),
+
             if (_searching)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),

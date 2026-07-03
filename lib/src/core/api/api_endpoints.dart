@@ -41,6 +41,10 @@ class ApiEndpoints {
   static String leadAnalysis(String callId) =>
       '/api/calls/$callId/lead-analysis';
 
+  // Consolidated Score-tab payload (rings + breakdown + sentiment timeline).
+  // Requires a completed lead-analysis — the upload pipeline runs it automatically.
+  static String callScore(String callId) => '/api/calls/$callId/score';
+
   // Raw transcript turns for a call
   static String transcript(String callId) => '/api/calls/$callId/transcript';
 

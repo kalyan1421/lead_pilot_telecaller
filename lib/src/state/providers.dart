@@ -35,6 +35,21 @@ final leadsProvider = NotifierProvider<LeadsController, List<Lead>>(
   LeadsController.new,
 );
 
+/// True when [leadsProvider] is showing mock/cached data because the last
+/// backend fetch failed — screens watch this to show [LpFallbackBanner]
+/// instead of silently letting mock leads look like a live inbox.
+final leadsUsingFallbackProvider =
+    NotifierProvider<LeadsUsingFallbackController, bool>(
+      LeadsUsingFallbackController.new,
+    );
+
+class LeadsUsingFallbackController extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void set(bool value) => state = value;
+}
+
 class LeadsController extends Notifier<List<Lead>> {
   /// Locally-saved manual edits, applied on top of whatever the backend/mock
   /// returns so edits persist across restarts and show everywhere.
@@ -64,9 +79,12 @@ class LeadsController extends Notifier<List<Lead>> {
     try {
       final fetched = await ref.read(leadRepositoryProvider).fetchInbox();
       state = [for (final l in fetched) _withOverride(l)];
+      ref.read(leadsUsingFallbackProvider.notifier).set(false);
     } catch (_) {
-      // Backend unreachable — keep the app usable on mock data.
+      // Backend unreachable — keep the app usable on mock data, but flag it
+      // so the UI can tell the telecaller these aren't live leads.
       state = [for (final l in mockLeads) _withOverride(l)];
+      ref.read(leadsUsingFallbackProvider.notifier).set(true);
     }
   }
 

@@ -83,9 +83,9 @@ class _EditLeadSheetState extends ConsumerState<EditLeadSheet> {
   Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.only(
-        left: 20,
-        right: 20,
-        top: 18,
+        left: AppSpacing.lg,
+        right: AppSpacing.lg,
+        top: AppSpacing.lg,
         bottom: MediaQuery.of(context).viewInsets.bottom + 24,
       ),
       child: SingleChildScrollView(
@@ -97,7 +97,7 @@ class _EditLeadSheetState extends ConsumerState<EditLeadSheet> {
               child: Container(
                 width: 36,
                 height: 4,
-                margin: const EdgeInsets.only(bottom: 18),
+                margin: const EdgeInsets.only(bottom: AppSpacing.lg),
                 decoration: BoxDecoration(
                   color: AppColors.westar,
                   borderRadius: BorderRadius.circular(2),
@@ -105,26 +105,26 @@ class _EditLeadSheetState extends ConsumerState<EditLeadSheet> {
               ),
             ),
             Text('Edit lead', style: AppText.display20.copyWith(fontSize: 18)),
-            const SizedBox(height: 16),
+            const SizedBox(height: AppSpacing.md),
             _Field(label: 'Name', controller: _name),
-            const SizedBox(height: 14),
+            const SizedBox(height: AppSpacing.md),
             _Field(
               label: 'Phone',
               controller: _phone,
               keyboardType: TextInputType.phone,
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: AppSpacing.md),
             _Field(label: 'Intent', controller: _intent),
-            const SizedBox(height: 14),
+            const SizedBox(height: AppSpacing.md),
             Text('Source', style: _labelStyle),
-            const SizedBox(height: 6),
+            const SizedBox(height: AppSpacing.xs),
             _SourceField(
               value: _source,
               onChanged: (s) => setState(() => _source = s),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: AppSpacing.md),
             Text('Temperature', style: _labelStyle),
-            const SizedBox(height: 6),
+            const SizedBox(height: AppSpacing.xs),
             Row(
               children: [
                 for (final t in LeadTemperature.values) ...[
@@ -136,11 +136,11 @@ class _EditLeadSheetState extends ConsumerState<EditLeadSheet> {
                     ),
                   ),
                   if (t != LeadTemperature.values.last)
-                    const SizedBox(width: 8),
+                    const SizedBox(width: AppSpacing.xs),
                 ],
               ],
             ),
-            const SizedBox(height: 22),
+            const SizedBox(height: AppSpacing.xl),
             SizedBox(
               width: double.infinity,
               child: PrimaryButton(
@@ -184,7 +184,7 @@ class _Field extends StatelessWidget {
             color: AppColors.merlin,
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: AppSpacing.xs),
         TextField(
           controller: controller,
           keyboardType: keyboardType,
@@ -194,13 +194,13 @@ class _Field extends StatelessWidget {
             filled: true,
             fillColor: AppColors.pampas,
             contentPadding:
-                const EdgeInsets.symmetric(horizontal: 15, vertical: 14),
+                const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.md),
             enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(AppRadius.sm),
               borderSide: const BorderSide(color: AppColors.westar),
             ),
             focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(AppRadius.sm),
               borderSide: const BorderSide(color: AppColors.blueRibbon),
             ),
           ),
@@ -219,10 +219,10 @@ class _SourceField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 15),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
       decoration: BoxDecoration(
         color: AppColors.pampas,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
         border: Border.all(color: AppColors.westar),
       ),
       child: DropdownButtonHideUnderline(
@@ -231,7 +231,7 @@ class _SourceField extends StatelessWidget {
           isExpanded: true,
           icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.schooner),
           style: AppText.body14.copyWith(color: AppColors.zeus),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppRadius.md),
           items: [
             for (final source in LeadSource.values)
               DropdownMenuItem(value: source, child: Text(source.displayName)),
@@ -278,7 +278,7 @@ class _TempChip extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: selected ? bg : AppColors.white,

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_app_utilities/flutter_app_utilities.dart' hide AppSpacing, AppRadius;
 
+import '../models/lead.dart';
 import '../services/call_actions.dart';
 import '../state/providers.dart';
 import '../theme/app_colors.dart';
@@ -27,13 +28,11 @@ class _DialerScreenState extends ConsumerState<DialerScreen> {
   bool _muted = false;
   bool _speaker = false;
 
-  // Rotating AI cues to simulate live suggestions
-  static const _cues = [
-    'Mention Phase 2 completion timeline now',
-    'Ask about the site visit - Saturday preferred',
-    'Reconfirm budget before closing',
-    "Wife's approval needed - offer joint visit",
-  ];
+  // Live cues, built from this contact's memory bubble (next_call_strategy,
+  // open objections, remembered facts) once `_cuesFuture` resolves — NOT
+  // hardcoded. A lead with no call history yet just has no cues to show.
+  List<String> _cues = const [];
+  bool _cuesLoaded = false;
   int _cueIndex = 0;
   Timer? _cueTimer;
 
@@ -45,10 +44,43 @@ class _DialerScreenState extends ConsumerState<DialerScreen> {
       const Duration(seconds: 1),
       (_) { if (mounted) setState(() {}); },
     );
-    _cueTimer = Timer.periodic(
-      const Duration(seconds: 8),
-      (_) { if (mounted) setState(() => _cueIndex = (_cueIndex + 1) % _cues.length); },
-    );
+    _loadCues();
+  }
+
+  Future<void> _loadCues() async {
+    try {
+      final lead = await ref.read(leadRepositoryProvider).leadDetail(widget.leadId);
+      if (!mounted) return;
+      setState(() {
+        _cues = _buildCues(lead);
+        _cuesLoaded = true;
+      });
+      if (_cues.length > 1) {
+        _cueTimer = Timer.periodic(
+          const Duration(seconds: 8),
+          (_) { if (mounted) setState(() => _cueIndex = (_cueIndex + 1) % _cues.length); },
+        );
+      }
+    } catch (_) {
+      // No memory available (offline, or backend error) — leave _cues empty;
+      // the UI shows the "no live cues" state rather than stale/fake content.
+      if (mounted) setState(() => _cuesLoaded = true);
+    }
+  }
+
+  /// Opening line + open objections + a couple of remembered facts — all
+  /// already computed by the backend's post-call analysis, nothing invented
+  /// here. Empty if this is the contact's first-ever call.
+  List<String> _buildCues(Lead lead) {
+    final cues = <String>[];
+    if (lead.script.openingLine.isNotEmpty) cues.add(lead.script.openingLine);
+    for (final o in lead.objections) {
+      if (o.question.isNotEmpty) cues.add('Address: ${o.question}');
+    }
+    for (final m in lead.memory.take(2)) {
+      if (m.text.isNotEmpty) cues.add(m.text);
+    }
+    return cues;
   }
 
   @override
@@ -74,13 +106,15 @@ class _DialerScreenState extends ConsumerState<DialerScreen> {
     );
 
     return Scaffold(
-      backgroundColor: const Color(0xFF202020),
+      backgroundColor: AppColors.zeus,
       body: SafeArea(
         child: Column(
           children: [
             // ── Top: launch native dialer ────────────────────────────────
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0,
+              ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
@@ -127,8 +161,8 @@ class _DialerScreenState extends ConsumerState<DialerScreen> {
                   // Live timer
                   Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 5,
+                      horizontal: AppSpacing.md,
+                      vertical: AppSpacing.xxs,
                     ),
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.10),
@@ -147,42 +181,67 @@ class _DialerScreenState extends ConsumerState<DialerScreen> {
               ),
             ),
 
-            // ── AI cue strip ─────────────────────────────────────────────
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 400),
-              child: Container(
-                key: ValueKey(_cueIndex),
-                margin: const EdgeInsets.symmetric(horizontal: 16),
+            // ── Live cue strip — real, lead-specific, only once loaded ────
+            if (_cuesLoaded && _cues.isNotEmpty)
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 400),
+                child: Container(
+                  key: ValueKey(_cueIndex),
+                  margin: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.sm,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.violetSurface.withValues(alpha: 0.92),
+                    borderRadius: BorderRadius.circular(AppRadius.lg),
+                    border: Border.all(color: AppColors.violetBorder),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.auto_awesome,
+                        size: 14,
+                        color: AppColors.electricViolet,
+                      ),
+                      const SizedBox(width: AppSpacing.xs),
+                      Expanded(
+                        child: Text(
+                          _cues[_cueIndex],
+                          style: AppText.body13.copyWith(
+                            color: AppColors.electricViolet,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else if (_cuesLoaded)
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 11,
+                  horizontal: AppSpacing.md,
+                  vertical: AppSpacing.sm,
                 ),
                 decoration: BoxDecoration(
-                  color: AppColors.violetSurface.withValues(alpha: 0.92),
+                  color: Colors.white.withValues(alpha: 0.06),
                   borderRadius: BorderRadius.circular(AppRadius.lg),
-                  border: Border.all(color: AppColors.violetBorder),
                 ),
                 child: Row(
                   children: [
-                    const Icon(
-                      Icons.auto_awesome,
-                      size: 14,
-                      color: AppColors.electricViolet,
-                    ),
+                    const Icon(Icons.info_outline, size: 14, color: AppColors.tide),
                     const SizedBox(width: AppSpacing.xs),
                     Expanded(
                       child: Text(
-                        _cues[_cueIndex],
-                        style: AppText.body13.copyWith(
-                          color: AppColors.electricViolet,
-                          fontWeight: FontWeight.w600,
-                        ),
+                        'First contact — no prior history yet',
+                        style: AppText.body13.copyWith(color: AppColors.tide),
                       ),
                     ),
                   ],
                 ),
               ),
-            ),
 
             const SizedBox(height: AppSpacing.lg),
 
@@ -210,7 +269,7 @@ class _DialerScreenState extends ConsumerState<DialerScreen> {
 
             // ── End call ─────────────────────────────────────────────────
             Padding(
-              padding: const EdgeInsets.fromLTRB(72, 0, 72, 32),
+              padding: const EdgeInsets.fromLTRB(72, 0, 72, AppSpacing.xxl),
               child: PrimaryButton(
                 label: 'End',
                 color: AppColors.alizarin,
@@ -254,7 +313,7 @@ class _DialControl extends StatelessWidget {
             ),
             child: Icon(icon, color: AppColors.white, size: 22),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: AppSpacing.xs),
           Text(
             label,
             style: AppText.caption11.copyWith(color: AppColors.tide),

@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../screens/add_outbound_lead_screen.dart';
+import '../screens/call_detail_screen.dart';
 import '../screens/dialer_screen.dart';
 import '../screens/lead_detail_screen.dart';
 import '../screens/main_shell.dart';
@@ -47,6 +48,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => PostCallScreen(
           leadId: state.pathParameters['id']!,
           isNewCall: state.extra as bool? ?? false,
+        ),
+      ),
+      GoRoute(
+        path: '/leads/:id/calls/:callId',
+        builder: (context, state) => CallDetailScreen(
+          leadId: state.pathParameters['id']!,
+          callId: state.pathParameters['callId']!,
+          args: state.extra as CallDetailArgs?,
         ),
       ),
     ],

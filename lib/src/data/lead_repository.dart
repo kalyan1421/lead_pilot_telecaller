@@ -99,19 +99,50 @@ class LeadRepository {
     return body is Map<String, dynamic> ? body : const {};
   }
 
+  /// `PATCH /api/calls/{id}/lead-analysis` — telecaller correction to key
+  /// points. Does not re-run AI analysis or touch any other analysis field.
+  Future<void> updateKeyPoints(String callId, List<String> keyPoints) async {
+    await _client.patch(
+      ApiEndpoints.leadAnalysis(callId),
+      body: {'key_points': keyPoints},
+    );
+  }
+
   /// `GET /api/calls/{id}/transcript` → diarized turns (speaker + text).
-  Future<List<TranscriptTurn>> transcript(String callId) async {
+  Future<TranscriptResult> transcript(String callId) async {
     final body = await _client.get(ApiEndpoints.transcript(callId));
     final t = (body is Map ? body['transcript'] : null);
     final turns = (t is Map ? t['turns'] : null);
+    return TranscriptResult(
+      language: (t is Map ? t['language'] : null)?.toString(),
+      turns: [
+        if (turns is List)
+          for (final raw in turns.whereType<Map>()) _turnFromJson(raw),
+      ],
+    );
+  }
+
+  /// `GET /api/calls/{id}/transcript/translate?target=en` ("View English" toggle).
+  Future<List<TranscriptTurn>> translatedTranscript(String callId) async {
+    final body = await _client.get(ApiEndpoints.translate(callId));
+    final turns = (body is Map ? body['turns'] : null);
     return [
       if (turns is List)
-        for (final raw in turns.whereType<Map>())
-          TranscriptTurn(
-            speaker: (raw['role'] ?? raw['speaker'] ?? '').toString(),
-            text: (raw['content'] ?? raw['text'] ?? '').toString(),
-          ),
+        for (final raw in turns.whereType<Map>()) _turnFromJson(raw),
     ];
+  }
+
+  static TranscriptTurn _turnFromJson(Map raw) => TranscriptTurn(
+    speaker: (raw['role'] ?? raw['speaker'] ?? '').toString(),
+    text: (raw['content'] ?? raw['text'] ?? '').toString(),
+    timestamp: raw['timestamp']?.toString(),
+  );
+
+  /// `GET /api/calls/{id}/score` — the consolidated Score-tab payload (hero
+  /// score, 4 rings, 5-dimension breakdown, sentiment timeline).
+  Future<Map<String, dynamic>> callScore(String callId) async {
+    final body = await _client.get(ApiEndpoints.callScore(callId));
+    return body is Map<String, dynamic> ? body : const {};
   }
 
   /// `GET /api/calls/{id}/processing-status` (Upload→Transcribe→Analyse→Done).
@@ -154,6 +185,8 @@ class LeadRepository {
     String? name,
     String? phone,
     String? source,
+    DateTime? callDate,
+    String? contactKey,
   }) async {
     final uri = ApiConfig.uri(ApiEndpoints.uploadRecording);
     final request = http.MultipartRequest('POST', uri)
@@ -161,6 +194,8 @@ class LeadRepository {
     if (name != null) request.fields['name'] = name;
     if (phone != null) request.fields['phone'] = phone;
     if (source != null) request.fields['source'] = source;
+    if (callDate != null) request.fields['call_date'] = callDate.toIso8601String();
+    if (contactKey != null) request.fields['contact_key_override'] = contactKey;
 
     try {
       final streamed = await request.send().timeout(ApiConfig.timeout);
@@ -247,6 +282,9 @@ class LeadRepository {
             score: _toInt(c['score'] ?? c['bant_score']),
             calledAt: _parseTs(c['timestamp']),
             leadId: contactKey,
+            callId: (c['call_id'] ?? '').toString().isEmpty
+                ? null
+                : c['call_id'].toString(),
           ),
     ];
 
@@ -376,10 +414,21 @@ class DedupeResult {
 
 /// One diarized turn of a call transcript.
 class TranscriptTurn {
-  const TranscriptTurn({required this.speaker, required this.text});
+  const TranscriptTurn({required this.speaker, required this.text, this.timestamp});
 
   final String speaker; // AGENT | USER (telecaller vs lead)
   final String text;
+  /// Elapsed time into the call as `MM:SS`, if the backend provided one.
+  final String? timestamp;
+}
+
+/// `GET /api/calls/{id}/transcript` response: turns + the detected source
+/// language (e.g. `"hi"`, `"te"`) used to drive the "View English" toggle.
+class TranscriptResult {
+  const TranscriptResult({required this.turns, this.language});
+
+  final List<TranscriptTurn> turns;
+  final String? language;
 }
 
 class TelecallerScore {

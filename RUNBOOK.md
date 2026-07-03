@@ -1,174 +1,205 @@
-# LeadPilot — Run Both (Flutter app + FastAPI backend)
+# LeadPilot — Run Backend + Flutter App
 
-How to run the **Flutter telecaller app** (`lead_pilot_telecaller`) against the
-**FastAPI "AI layer" backend** (`voicesummary-main`). Verified on macOS
-(Darwin), Flutter 3.41, Postgres 14, Python 3.10.
+How to start the **FastAPI backend** (`telecaller-main`) and the **Flutter app**
+(`lead_pilot_flutter`) together on macOS.
 
 ```
-lead_pilot_telecaller/   ← this folder (Flutter app)
-voicesummary-main/        ← ../voicesummary-main (FastAPI backend, port 8000)
+Client-project/Lead Pilot/
+  telecaller-main/       ← FastAPI backend (Python, port 8000)
+  lead_pilot_flutter/    ← Flutter app (this folder)
 ```
 
-The app talks to the backend over HTTP. **Start the backend first**, then the app.
-If the backend is unreachable the app automatically falls back to mock data, so
-it never crashes — but you won't see live data until the backend is up.
+Start the backend first. If it's unreachable the app falls back to mock data
+automatically — the UI stays up but you won't see live leads or call scores.
 
 ---
 
-## 0. One-time prerequisites
+## Prerequisites (one-time)
 
-| Tool | Check | Install (macOS / Homebrew) |
+| Tool | Check | Install |
 |---|---|---|
 | Flutter 3.x | `flutter --version` | https://docs.flutter.dev/get-started |
-| Python 3.10+ | `python3 --version` | `brew install python@3.11` |
+| Python 3.11+ | `python3 --version` | `brew install python@3.11` |
 | PostgreSQL 14 | `psql --version` | `brew install postgresql@14` |
 | ffmpeg | `ffmpeg -version` | `brew install ffmpeg` |
-| A Groq API key | — | free at https://console.groq.com/keys |
+| Sarvam API key | — | https://dashboard.sarvam.ai |
 
 ---
 
-## 1. Backend — `../voicesummary-main` (port 8000)
+## 1. Backend — `telecaller-main/` (port 8000)
 
 ### 1a. Start PostgreSQL and create the database (once)
-```bash
-# start the server
-pg_ctl -D /opt/homebrew/var/postgresql@14 -l /tmp/pg14.log start
-# or:  brew services start postgresql@14
 
-# create the database (safe to re-run)
+```bash
+brew services start postgresql@14
 createdb voicesummary 2>/dev/null || echo "already exists"
 ```
 
-### 1b. Python env + dependencies (once)
+### 1b. Python environment (once)
+
 ```bash
-cd "../voicesummary-main"
+cd "../telecaller-main"
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
-pip install matplotlib            # NEEDED at startup, missing from requirements.txt
-pip install openai-whisper        # ONLY for recording upload → transcription
+pip install matplotlib        # needed at startup (transitive dep, missing from requirements.txt)
+pip install openai-whisper    # only needed for upload → transcribe flow
 ```
-> ⚠️ `matplotlib` is imported transitively at startup (`audio_processor` →
-> `improved_voice_analyzer`). Without it `uvicorn` fails with
-> `ModuleNotFoundError: No module named 'matplotlib'`.
-> `openai-whisper` is only needed for the upload/transcribe flow; the inbox,
-> lead detail, memory, and telecaller endpoints work without it.
 
-### 1c. `.env` (once)
-A `.env` already exists in `voicesummary-main`. It must contain at least:
+> `matplotlib` is imported at startup via `audio_processor → improved_voice_analyzer`.
+> Without it uvicorn exits immediately with `ModuleNotFoundError`.
+>
+> `openai-whisper` is only needed for recording upload/transcription. Inbox, lead
+> detail, memory, and telecaller score all work without it.
+
+### 1c. `.env` file (once)
+
+```bash
+cd "../telecaller-main"
+cp env.example .env
+```
+
+Edit `.env` — minimum required values:
+
 ```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/voicesummary
-GROQ_API_KEY=gsk_...your_key...
+DATABASE_URL=postgresql://kalyan@localhost:5432/voicesummary
+SARVAM_API_KEYS=your_key_here
+SARVAM_CHAT_MODEL=sarvam-105b
+SARVAM_STT_MODEL=saaras:v3
+SARVAM_STT_MODE=transcribe
 STORAGE_MODE=local
+LOCAL_STORAGE_PATH=./local_storage
+AUDIO_SOURCE_PATH=./Audio
+APP_HOST=0.0.0.0
 APP_PORT=8000
+DEBUG=true
 ```
 
-### 1d. Create the tables (once, idempotent)
-```bash
-source .venv/bin/activate
-python -c "from app.database import engine, Base; import app.models; Base.metadata.create_all(bind=engine); print('tables ready')"
-```
+### 1d. Start the backend
 
-### 1e. Run the backend (every time)
 ```bash
-cd "../voicesummary-main"
+cd "../telecaller-main"
 source .venv/bin/activate
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
-- `--host 0.0.0.0` is required so a **physical phone** on your Wi-Fi can reach it.
-- API docs: http://localhost:8000/docs
 
-### 1f. Smoke-test it works
+`--host 0.0.0.0` is required so a physical phone on your Wi-Fi can reach it.
+Tables are created automatically on first startup.
+
+API docs: http://localhost:8000/docs
+
+### 1e. Smoke-test
+
 ```bash
 curl http://localhost:8000/health
 curl http://localhost:8000/api/inbox
-# create a demo lead so the inbox isn't empty:
-curl -X POST http://localhost:8000/api/leads -H 'Content-Type: application/json' \
-  -d '{"name":"Sneha Reddy","phone":"+919876543210","source":"google","reason":"Wants 3BHK"}'
-curl http://localhost:8000/api/inbox        # now shows 1 lead
-```
 
-> **Want real AI-analysed leads (scores, memory bubble)?** Import the sample
-> audio once (needs `openai-whisper` + `GROQ_API_KEY`):
-> ```bash
-> python import_audio.py      # transcribes + analyses the 9 sample calls
-> ```
+# Create a demo lead (appears in inbox immediately):
+curl -X POST http://localhost:8000/api/leads \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Sneha Reddy","phone":"+919876543210","source":"google","reason":"Wants 3BHK"}'
+
+# Load the sample audio + run full AI analysis (needs openai-whisper + SARVAM_API_KEYS):
+python import_audio.py
+```
 
 ---
 
-## 2. Flutter app — this folder
+## 2. Flutter app — `lead_pilot_flutter/`
 
 ### 2a. Point the app at your backend
-Edit [`lib/src/core/api/api_config.dart`](lib/src/core/api/api_config.dart) →
+
+Edit [`lib/src/core/api/api_config.dart`](lib/src/core/api/api_config.dart),
 `ApiEnvironment.dev.baseUrl`:
 
-| Target | baseUrl |
+| Target | Value |
 |---|---|
-| **Android emulator** | `http://10.0.2.2:8000`  (host loopback) |
-| **Physical phone (Xiaomi)** | `http://<your-mac-LAN-IP>:8000` |
-| **iOS simulator / desktop / web** | `http://localhost:8000` |
+| Android emulator | `http://10.0.2.2:8000` |
+| Physical phone (same Wi-Fi as Mac) | `http://<mac-LAN-IP>:8000` |
+| iOS simulator / macOS desktop | `http://localhost:8000` |
 
-Find your Mac's LAN IP (phone + Mac must be on the **same Wi-Fi**):
+Find your Mac's LAN IP:
 ```bash
-ipconfig getifaddr en0      # e.g. 192.168.31.132  → http://192.168.31.132:8000
+ipconfig getifaddr en0      # e.g. 192.168.31.132
 ```
-> Currently set to `http://192.168.31.132:8000`. Update the one line if your
-> network/IP changed.
->
-> `ApiConfig.useMockData` is already `false` (live backend). Set it back to
-> `true` to demo the UI offline with no backend running.
 
-### 2b. Run it
+Currently set to `http://192.168.31.132:8000`. Change the one line if your
+network or IP has changed.
+
+`ApiConfig.useMockData` is `false` (live backend). Set it back to `true` to run
+the UI fully offline.
+
+### 2b. Run
+
 ```bash
-cd "<this folder>"
 flutter pub get
-flutter devices            # list connected phones / emulators
-flutter run                # pick a device, or: flutter run -d <deviceId>
+flutter devices
+flutter run                 # or: flutter run -d <deviceId>
 ```
-
-The home/inbox, lead detail (memory + history), and telecaller score now load
-from the backend. Live-call recording upload requires `openai-whisper` on the
-backend (step 1b).
 
 ---
 
-## 3. Run both quickly
+## 3. Quick-start (both together)
 
-Two terminals:
-
+**Terminal 1 — backend:**
 ```bash
-# Terminal 1 — backend
-cd "../voicesummary-main" && source .venv/bin/activate && \
-  python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+cd "/Users/kalyan/Client-project/Lead Pilot/telecaller-main"
+source .venv/bin/activate
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
 
-# Terminal 2 — app
-cd "<this folder>" && flutter run
+**Terminal 2 — Flutter:**
+```bash
+cd "/Users/kalyan/Client-project/Lead Pilot/lead_pilot_flutter"
+flutter run
 ```
 
 ---
 
-## 4. Troubleshooting
+## 4. Backend module layout
 
-| Symptom | Cause / fix |
-|---|---|
-| App shows mock leads, not real data | Backend unreachable. Check it's running and the `baseUrl` host/port + Wi-Fi. |
-| `ModuleNotFoundError: matplotlib` on `uvicorn` start | `pip install matplotlib` (step 1b). |
-| Phone can't connect, emulator can | Use the **LAN IP** (not `localhost`) for a physical device; phone + Mac on same Wi-Fi; backend started with `--host 0.0.0.0`. |
-| Android: `CLEARTEXT ... not permitted` | Plain-http to a LAN IP is blocked by default on release builds. Use a debug build, or add a network-security-config / `usesCleartextTraffic` for the dev host. |
-| `connection refused :5432` | Postgres not running — `brew services start postgresql@14`. |
-| Inbox empty (`leads: []`) | No leads yet. `POST /api/leads` (step 1f) or run `python import_audio.py`. |
-| Upload/transcribe fails | `pip install openai-whisper` and ensure `ffmpeg` is on PATH. |
-| Verify which env the app uses | `ApiConfig.environment` in `api_config.dart` (dev / staging / prod). |
+`app/api/` is split into four focused modules (all wired in `app/main.py`):
+
+| File | Responsibility | Key routes |
+|---|---|---|
+| `calls.py` | Raw call CRUD, audio, transcript | `GET/PUT/DELETE /api/calls/*` |
+| `upload.py` | Upload pipeline + crash recovery | `POST /api/calls/upload`, `/processing-status` |
+| `analysis.py` | Per-call AI + Score tab | `/api/calls/{id}/lead-analysis`, `/score` |
+| `intelligence.py` | Inbox, leads, memory, telecaller | `/api/inbox`, `/api/leads/*`, `/api/memory/*` |
+| `_shared.py` | Shared DB helpers | (imported, no routes) |
 
 ---
 
-## 5. What's wired vs. still mock
+## 5. What's live vs. still local
 
-- **Live from backend:** lead inbox (`/api/inbox`), lead detail + memory bubble
-  (`/api/leads/{contact_key}`), telecaller score (`/api/telecaller/score`),
-  dedup (`/api/leads/dedupe`), recording upload pipeline (`/api/calls/*`).
-- **Still mock (no backend endpoint yet):** Follow-ups list, global Call Log.
-- **Ready but not yet bound to a button:** `LeadRepository.createLead` /
-  `uploadRecording` — wire these into the Add-Outbound "Save" action to make
-  that screen fully live.
+| Feature | Status | Endpoint |
+|---|---|---|
+| Lead inbox | Live | `GET /api/inbox` |
+| Lead detail + memory bubble | Live | `GET /api/leads/{contact_key}` |
+| Save outbound lead | Live | `POST /api/leads` |
+| Dedup check | Live | `GET /api/leads/dedupe` |
+| Recording upload + pipeline | Live | `POST /api/calls/upload` |
+| Processing stepper | Live | `GET /api/calls/{id}/processing-status` |
+| Transcript (diarized turns) | Live | `GET /api/calls/{id}/transcript` |
+| Score tab (4 rings + notes + trends) | Live | `GET /api/calls/{id}/score` |
+| Summary + key points + next steps | Live | `GET /api/calls/{id}/lead-analysis` |
+| Telecaller rolling score | Live | `GET /api/telecaller/score` |
+| Follow-ups list | Local only | No endpoint yet |
+| Pre-call checklist | Local only | No endpoint yet |
+
+---
+
+## 6. Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| App shows mock data | Backend unreachable — check it's running and `baseUrl` LAN IP is correct. Phone + Mac must be on same Wi-Fi. |
+| `ModuleNotFoundError: matplotlib` | `pip install matplotlib` |
+| `connection refused :5432` | PostgreSQL not running — `brew services start postgresql@14` |
+| `connection refused :8000` from phone | Start backend with `--host 0.0.0.0` not `127.0.0.1` |
+| Android CLEARTEXT error | Use a debug build; release blocks plain HTTP by default |
+| Inbox empty | Run `python import_audio.py` or `POST /api/leads` (step 1e) |
+| Upload/transcribe fails | `pip install openai-whisper` and ensure `ffmpeg` is on PATH |
+| Score tab shows `--` | Analysis not complete — wait ~60 s after upload then re-open the lead |
+| Wrong LAN IP | Re-run `ipconfig getifaddr en0` and update `ApiEnvironment.dev.baseUrl` |

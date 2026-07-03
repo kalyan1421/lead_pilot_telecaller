@@ -275,6 +275,7 @@ class CallRecord {
     required this.score,
     this.calledAt,
     this.leadId,
+    this.callId,
   });
 
   final String title;
@@ -283,6 +284,9 @@ class CallRecord {
   final DateTime? calledAt;
   /// ID of the associated [Lead] — used to build the global call log.
   final String? leadId;
+  /// Backend `call_id` for this specific call. Null for a locally-placed call
+  /// that hasn't been captured/uploaded yet — those have no stored transcript.
+  final String? callId;
 
   factory CallRecord.fromJson(Map<String, dynamic> json) => CallRecord(
     title: json['title'] as String? ?? '',
@@ -292,6 +296,7 @@ class CallRecord {
         ? DateTime.tryParse(json['called_at'] as String)
         : null,
     leadId: json['lead_id'] as String?,
+    callId: json['call_id'] as String?,
   );
 
   Map<String, dynamic> toJson() => {
@@ -300,6 +305,7 @@ class CallRecord {
     'score': score,
     'called_at': calledAt?.toIso8601String(),
     'lead_id': leadId,
+    'call_id': callId,
   };
 }
 

@@ -787,3 +787,87 @@ class LpTextField extends StatelessWidget {
     );
   }
 }
+
+/// Full-page error state with an optional retry action — for a fetch that
+/// has no sensible fallback (e.g. a specific call/lead that failed to load).
+/// Not for list screens that fall back to mock data on failure; use
+/// [LpFallbackBanner] there instead so a "fail soft" screen doesn't also look
+/// broken.
+class LpErrorState extends StatelessWidget {
+  const LpErrorState({super.key, required this.message, this.onRetry});
+
+  final String message;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.xl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, color: AppColors.alizarin, size: 32),
+            const AppGap.sm(),
+            Text(
+              message,
+              style: AppText.body14.copyWith(color: AppColors.schooner),
+              textAlign: TextAlign.center,
+            ),
+            if (onRetry != null) ...[
+              const AppGap.sm(),
+              TextButton(onPressed: onRetry, child: const Text('Retry')),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact banner for screens that deliberately fall back to cached/mock
+/// data rather than blocking on a failed fetch — tells the telecaller what
+/// they're looking at isn't necessarily live, with a one-tap retry. Meant to
+/// sit above the (still-visible) fallback content, not replace it.
+class LpFallbackBanner extends StatelessWidget {
+  const LpFallbackBanner({super.key, required this.onRetry, this.message = 'Showing cached data'});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.xs),
+      color: AppColors.warningSurface,
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_off_outlined, size: 14, color: AppColors.warningText),
+          const AppGap.xs(axis: Axis.horizontal),
+          Expanded(
+            child: Text(
+              message,
+              style: AppText.caption11.copyWith(color: AppColors.warningText),
+            ),
+          ),
+          TextButton(
+            onPressed: onRetry,
+            style: TextButton.styleFrom(
+              padding: EdgeInsets.zero,
+              minimumSize: const Size(0, 0),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(
+              'Retry',
+              style: AppText.caption11.copyWith(
+                color: AppColors.warningText,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

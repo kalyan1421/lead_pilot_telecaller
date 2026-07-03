@@ -308,9 +308,13 @@ class TranscriptionService {
     }
   }
 
-  /// Fetch the stored transcript + analysis and shape them into a
-  /// [CallTranscription]. Lead analysis is best-effort (tolerates a 404 if the
-  /// analyse stage produced nothing).
+  /// Fetch transcript + analysis, shape into [CallTranscription].
+  ///
+  /// Calls two backend endpoints concurrently:
+  ///   - `/lead-analysis` → summary, key points, next steps, follow-up script
+  ///   - `/score`         → rings with real telecaller value, breakdown notes, trends
+  ///
+  /// Either can 404 without breaking the other (analysis may not be ready yet).
   Future<CallTranscription> _assemble(String callId) async {
     final tBody = await _getJson(ApiEndpoints.transcript(callId));
     final transcript = tBody['transcript'] is Map<String, dynamic>
@@ -328,16 +332,20 @@ class TranscriptionService {
           },
     ];
 
-    Map<String, dynamic> analysis = const {};
-    try {
-      analysis = await _getJson(ApiEndpoints.leadAnalysis(callId));
-    } catch (_) {/* analysis not ready — render transcript only */}
+    final results = await Future.wait([
+      _getJsonOrEmpty(ApiEndpoints.leadAnalysis(callId)),
+      _getJsonOrEmpty(ApiEndpoints.callScore(callId)),
+    ]);
+    final la = results[0];
+    final scoreData = results[1];
 
     return CallTranscription.fromJson({
       'transcript': transcript['full_text'] ?? '',
       'languageCode': transcript['language'],
       'entries': entries,
-      'analysis': analysis.isEmpty ? null : _mapAnalysis(analysis),
+      'analysis': la.isEmpty && scoreData.isEmpty
+          ? null
+          : _buildAnalysis(la, scoreData),
     });
   }
 
@@ -353,19 +361,73 @@ class TranscriptionService {
     return decoded is Map<String, dynamic> ? decoded : const {};
   }
 
-  /// Maps the FastAPI `lead-analysis` payload (snake_case) into the camelCase
-  /// shape [CallAnalysis.fromJson] expects.
-  Map<String, dynamic> _mapAnalysis(Map<String, dynamic> la) {
+  Future<Map<String, dynamic>> _getJsonOrEmpty(String path) async {
+    try {
+      return await _getJson(path);
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  /// Merges `/lead-analysis` (narrative) + `/score` (rings + notes) into the
+  /// camelCase shape [CallAnalysis.fromJson] expects.
+  ///
+  /// `/score` is authoritative for all numeric rings (includes the proper rolling
+  /// telecaller score and real breakdown notes). `/lead-analysis` provides the
+  /// narrative: summary, key points, next steps, follow-up suggestion. Each is
+  /// treated as optional — graceful degradation when one endpoint is unavailable.
+  Map<String, dynamic> _buildAnalysis(
+    Map<String, dynamic> la,
+    Map<String, dynamic> scoreData,
+  ) {
     int pct(Object? v) => v is num ? v.round() : 0;
-    final debrief = la['agent_debrief'] is Map<String, dynamic>
-        ? la['agent_debrief'] as Map<String, dynamic>
-        : const <String, dynamic>{};
+
+    // Narrative fields from /lead-analysis
     final summary = la['call_summary'] is Map<String, dynamic>
         ? la['call_summary'] as Map<String, dynamic>
         : const <String, dynamic>{};
     final nextAction = la['next_action'] is Map<String, dynamic>
         ? la['next_action'] as Map<String, dynamic>
         : const <String, dynamic>{};
+    final debrief = la['agent_debrief'] is Map<String, dynamic>
+        ? la['agent_debrief'] as Map<String, dynamic>
+        : const <String, dynamic>{};
+
+    // Ring values from /score — includes rolling telecaller (not just this call).
+    // Falls back to /lead-analysis debrief if /score was unavailable.
+    final rings = scoreData['rings'] is Map<String, dynamic>
+        ? scoreData['rings'] as Map<String, dynamic>
+        : const <String, dynamic>{};
+    int ringVal(String key) {
+      final r = rings[key];
+      return r is Map ? pct(r['value']) : 0;
+    }
+
+    final hasScore = rings.isNotEmpty;
+
+    // Breakdown from /score includes real per-dimension notes from the LLM debrief.
+    // Falls back to debrief scores with empty notes when /score is unavailable.
+    final rawBreakdown = scoreData['breakdown'];
+    final breakdown = rawBreakdown is List
+        ? [
+            for (final b in rawBreakdown.whereType<Map<String, dynamic>>())
+              {
+                'label': (b['label'] ?? '').toString(),
+                'score': pct(b['score']),
+                'note': (b['note'] ?? '').toString(),
+              },
+          ]
+        : [
+            {'label': 'Opening', 'score': pct(debrief['opening_score']), 'note': ''},
+            {'label': 'Discovery', 'score': pct(debrief['discovery_score']), 'note': ''},
+            {'label': 'Pitch', 'score': pct(debrief['pitch_score']), 'note': ''},
+            {
+              'label': 'Objection Handling',
+              'score': pct(debrief['objection_handling_score']),
+              'note': '',
+            },
+            {'label': 'Closing', 'score': pct(debrief['closing_score']), 'note': ''},
+          ];
 
     return {
       'summary': (summary['headline'] ?? la['lead_verdict_reason'] ?? '').toString(),
@@ -379,38 +441,16 @@ class TranscriptionService {
             },
       ],
       'scores': {
-        'overall': pct(debrief['total_score']),
-        'telecaller': pct(debrief['total_score']),
-        'leadQuality': pct(la['bant_score']),
-        'sentiment': _sentimentPct(la['sentiment_arc']),
+        'overall': hasScore ? ringVal('overall') : pct(debrief['total_score']),
+        'telecaller': ringVal('telecaller'),
+        'leadQuality': hasScore ? ringVal('lead_quality') : pct(la['bant_score']),
+        'sentiment': ringVal('sentiment'),
       },
-      'breakdown': [
-        {'label': 'Opening', 'score': pct(debrief['opening_score']), 'note': ''},
-        {'label': 'Discovery', 'score': pct(debrief['discovery_score']), 'note': ''},
-        {'label': 'Pitch', 'score': pct(debrief['pitch_score']), 'note': ''},
-        {
-          'label': 'Objection Handling',
-          'score': pct(debrief['objection_handling_score']),
-          'note': '',
-        },
-        {'label': 'Closing', 'score': pct(debrief['closing_score']), 'note': ''},
-      ],
+      'breakdown': breakdown,
       'sentimentNote': (summary['overall_tone'] ?? '').toString(),
       'followUpSuggestion':
           (nextAction['follow_up_script'] ?? nextAction['recommended_action'] ?? '')
               .toString(),
     };
-  }
-
-  /// Averages a sentiment arc (per-turn scores in roughly -1..1) into a 0–100.
-  int _sentimentPct(Object? arc) {
-    if (arc is! List || arc.isEmpty) return 0;
-    final scores = <double>[
-      for (final t in arc.whereType<Map>())
-        if (t['score'] is num) (t['score'] as num).toDouble(),
-    ];
-    if (scores.isEmpty) return 0;
-    final avg = scores.reduce((a, b) => a + b) / scores.length;
-    return (((avg + 1) / 2) * 100).clamp(0, 100).round();
   }
 }

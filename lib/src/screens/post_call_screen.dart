@@ -118,7 +118,7 @@ class _PostCallScreenState extends ConsumerState<PostCallScreen>
       backgroundColor: AppColors.springWood,
       bottomNavigationBar: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.xs, AppSpacing.md, AppSpacing.sm),
           child: Row(
             children: [
               Expanded(
@@ -133,14 +133,14 @@ class _PostCallScreenState extends ConsumerState<PostCallScreen>
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.blueRibbon,
                     side: BorderSide(color: AppColors.blueRibbon),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(AppRadius.md),
                     ),
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: ElevatedButton.icon(
                   icon: const Icon(Icons.phone_outlined, size: 16),
@@ -149,7 +149,7 @@ class _PostCallScreenState extends ConsumerState<PostCallScreen>
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.blueRibbon,
                     foregroundColor: AppColors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(AppRadius.md),
                     ),
@@ -204,7 +204,7 @@ class _CallDetailHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       color: AppColors.white,
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+      padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.lg),
       child: Column(
         children: [
           Row(
@@ -233,7 +233,7 @@ class _CallDetailHeader extends StatelessWidget {
             style: AppText.display20.copyWith(fontSize: 19),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: AppSpacing.lg),
           _HeroScore(score: analysis?.scores.overall),
         ],
       ),
@@ -394,7 +394,7 @@ class _SummaryTab extends StatelessWidget {
     final showSkeleton = analysis == null && (rendering || isAnalysing);
     if (showSkeleton) {
       return ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+        padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.xxl),
         children: [
           _CallRecordingCard(leadId: lead.id),
           const AppGap.md(),
@@ -407,7 +407,7 @@ class _SummaryTab extends StatelessWidget {
 
     final a = analysis;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+      padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.xxl),
       children: [
         _CallRecordingCard(leadId: lead.id),
         const AppGap.md(),
@@ -438,7 +438,7 @@ class _AwaitingAnalysisCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return LpCard(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(AppSpacing.md),
       child: Row(
         children: [
           const Icon(Icons.insights_outlined, size: 20, color: AppColors.tide),
@@ -466,7 +466,7 @@ class _AnalysisSummaryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return LpCard(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(AppSpacing.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -505,7 +505,7 @@ class _RenderingAnalysisPanel extends StatelessWidget {
         return LpCard(
           color: AppColors.ribbonSurface,
           borderColor: AppColors.periwinkle,
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(AppSpacing.md),
           child: Row(
             children: [
               _PulseDot(opacity: pulse),
@@ -615,7 +615,7 @@ class _CallNotesCard extends StatelessWidget {
     return LpCard(
       color: AppColors.ribbonSurface,
       borderColor: AppColors.periwinkle,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(AppSpacing.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -664,7 +664,7 @@ class _KeyPointsCard extends StatelessWidget {
     ];
 
     return LpCard(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(AppSpacing.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -682,12 +682,12 @@ class _KeyPointsCard extends StatelessWidget {
           const AppGap.sm(),
           for (final point in points)
             Padding(
-              padding: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Padding(
-                    padding: EdgeInsets.only(top: 6),
+                    padding: EdgeInsets.only(top: AppSpacing.xs),
                     child: Icon(
                       Icons.circle,
                       size: 6,
@@ -726,9 +726,9 @@ class _NextStepsSection extends StatelessWidget {
         // AI-suggested steps (when the call has been analysed).
         for (var i = 0; i < steps.length; i++)
           Padding(
-            padding: const EdgeInsets.only(bottom: 9),
+            padding: const EdgeInsets.only(bottom: AppSpacing.xs),
             child: LpCard(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              padding: const EdgeInsets.fromLTRB(AppSpacing.sm, AppSpacing.sm, AppSpacing.sm, AppSpacing.sm),
               child: Row(
                 children: [
                   Container(
@@ -805,7 +805,7 @@ class _NextStepAction extends StatelessWidget {
     return TapScale(
       onTap: onTap,
       child: LpCard(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
         child: Row(
           children: [
             Container(
@@ -849,7 +849,7 @@ class _ScoreTab extends StatelessWidget {
     final a = analysis;
     if (a == null) {
       return ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+        padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.xxl),
         children: const [
           _AwaitingAnalysisCard(
             message:
@@ -869,7 +869,7 @@ class _ScoreTab extends StatelessWidget {
     ];
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+      padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.xxl),
       children: [
         GridView.count(
           crossAxisCount: 2,
@@ -928,7 +928,7 @@ class _MetricScoreCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = good ? AppColors.greenHaze : AppColors.tahitiGold;
     return LpCard(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(AppSpacing.sm),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -1033,7 +1033,7 @@ class _ScoreTag extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.xxs),
       decoration: BoxDecoration(
         color: AppColors.pampas,
         borderRadius: BorderRadius.circular(AppRadius.pill),
@@ -1066,7 +1066,7 @@ class _BreakdownRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = good ? AppColors.greenHaze : AppColors.tahitiGold;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 15),
+      padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1150,35 +1150,35 @@ class _ScoreSentimentCard extends StatelessWidget {
                   flex: 2,
                   child: ColoredBox(
                     color: AppColors.westar,
-                    child: SizedBox(height: 18),
+                    child: SizedBox(height: AppSpacing.lg),
                   ),
                 ),
                 Expanded(
                   flex: 2,
                   child: ColoredBox(
-                    color: Color(0xFFFBBF24),
-                    child: SizedBox(height: 18),
+                    color: AppColors.tahitiGold,
+                    child: SizedBox(height: AppSpacing.lg),
                   ),
                 ),
                 Expanded(
                   flex: 2,
                   child: ColoredBox(
                     color: AppColors.westar,
-                    child: SizedBox(height: 18),
+                    child: SizedBox(height: AppSpacing.lg),
                   ),
                 ),
                 Expanded(
                   flex: 3,
                   child: ColoredBox(
-                    color: Color(0xFF34D399),
-                    child: SizedBox(height: 18),
+                    color: AppColors.greenHaze,
+                    child: SizedBox(height: AppSpacing.lg),
                   ),
                 ),
                 Expanded(
                   flex: 2,
                   child: ColoredBox(
-                    color: Color(0xFF34D399),
-                    child: SizedBox(height: 18),
+                    color: AppColors.greenHaze,
+                    child: SizedBox(height: AppSpacing.lg),
                   ),
                 ),
               ],
@@ -1238,7 +1238,7 @@ class _TranscriptTabState extends ConsumerState<_TranscriptTab> {
         transcription.entries.any((e) => (e.textEn ?? '').trim().isNotEmpty);
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
+      padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.xxl),
       children: [
         Wrap(
           spacing: 8,
@@ -1288,7 +1288,7 @@ class _TranscriptLanguageToggle extends StatelessWidget {
     return LpCard(
       color: AppColors.ribbonSurface,
       borderColor: AppColors.periwinkle,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(AppSpacing.sm),
       child: Row(
         children: [
           const Icon(Icons.language, size: 18, color: AppColors.blueRibbon),
@@ -1305,7 +1305,7 @@ class _TranscriptLanguageToggle extends StatelessWidget {
             behavior: HitTestBehavior.opaque,
             onTap: onToggle,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
               decoration: BoxDecoration(
                 color: AppColors.white,
                 borderRadius: BorderRadius.circular(AppRadius.xs),
@@ -1334,7 +1334,7 @@ class _TranscriptEmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(AppSpacing.xxl),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1366,7 +1366,7 @@ class _MetaChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
       decoration: BoxDecoration(
         color: AppColors.pampas,
         borderRadius: BorderRadius.circular(AppRadius.pill),
@@ -1401,7 +1401,7 @@ class _MessageBubble extends StatelessWidget {
     final alignment = outgoing ? Alignment.centerRight : Alignment.centerLeft;
     final width = MediaQuery.sizeOf(context).width * 0.74;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: Align(
         alignment: alignment,
         child: Column(
@@ -1419,7 +1419,7 @@ class _MessageBubble extends StatelessWidget {
             const AppGap.xxs(),
             Container(
               width: width,
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(AppSpacing.sm),
               decoration: BoxDecoration(
                 color: outgoing ? AppColors.ribbonSurface : AppColors.white,
                 borderRadius: BorderRadius.circular(AppRadius.sm),
@@ -1485,7 +1485,7 @@ class _CallRecordingCard extends ConsumerWidget {
     final (icon, iconColor, title, subtitle) = _present(capture);
 
     return LpCard(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(AppSpacing.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1634,7 +1634,7 @@ class _CallRecordingCard extends ConsumerWidget {
     CallCaptureState capture,
   ) {
     Widget bar(List<Widget> buttons) => Padding(
-      padding: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.only(top: AppSpacing.sm),
       child: Row(children: buttons),
     );
 
@@ -1718,7 +1718,7 @@ class _RecordingActionButton extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.xs),
         decoration: BoxDecoration(
           color: filled ? AppColors.blueRibbon : AppColors.ribbonSurface,
           borderRadius: BorderRadius.circular(AppRadius.sm),

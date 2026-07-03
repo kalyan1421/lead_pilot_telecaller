@@ -13,19 +13,37 @@ import '../theme/app_theme.dart';
 import 'leadpilot_widgets.dart';
 
 class ScheduleCallSheet extends ConsumerStatefulWidget {
-  const ScheduleCallSheet({super.key, required this.lead, this.defaultDaysAhead = 1});
+  const ScheduleCallSheet({
+    super.key,
+    required this.lead,
+    this.defaultDaysAhead = 1,
+    this.initialNote,
+  });
 
   final Lead lead;
   final int defaultDaysAhead;
 
-  static Future<void> show(BuildContext context, Lead lead, {int daysAhead = 1}) =>
+  /// Pre-fills the note field — e.g. a call's "next step" text, so acting on
+  /// it from Call Detail doesn't require retyping it as a follow-up note.
+  final String? initialNote;
+
+  static Future<void> show(
+    BuildContext context,
+    Lead lead, {
+    int daysAhead = 1,
+    String? initialNote,
+  }) =>
       showModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        builder: (_) => ScheduleCallSheet(lead: lead, defaultDaysAhead: daysAhead),
+        builder: (_) => ScheduleCallSheet(
+          lead: lead,
+          defaultDaysAhead: daysAhead,
+          initialNote: initialNote,
+        ),
       );
 
   @override
@@ -42,6 +60,7 @@ class _ScheduleCallSheetState extends ConsumerState<ScheduleCallSheet> {
   void initState() {
     super.initState();
     _date = DateTime.now().add(Duration(days: widget.defaultDaysAhead));
+    if (widget.initialNote != null) _noteController.text = widget.initialNote!;
   }
 
   @override
