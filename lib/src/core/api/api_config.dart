@@ -30,9 +30,12 @@ class ApiEnvironment {
     name: 'staging',
     baseUrl: 'https://staging.api.leadpilot.example/v1',
   );
+  // Production backend: FastAPI (voicesummary-main) deployed on Render.
+  // Routes live at the root under /api/... (no version prefix), matching
+  // ApiEndpoints, so the base URL is the bare host with no trailing path.
   static const prod = ApiEnvironment(
     name: 'prod',
-    baseUrl: 'https://api.leadpilot.example/v1',
+    baseUrl: 'https://leadpilot-backend-perc.onrender.com',
   );
 }
 
@@ -44,9 +47,10 @@ class ApiConfig {
   /// falling back to mock data only if the backend is unreachable.
   static const bool useMockData = false;
 
-  /// The active backend target. Swap to [ApiEnvironment.staging] / `.prod`
-  /// per build flavor when those exist.
-  static const ApiEnvironment environment = ApiEnvironment.dev;
+  /// The active backend target. Now pointed at the deployed Render backend.
+  /// Swap back to [ApiEnvironment.dev] for local development against a
+  /// laptop-hosted FastAPI instance.
+  static const ApiEnvironment environment = ApiEnvironment.prod;
 
   static String get baseUrl => environment.baseUrl;
 
