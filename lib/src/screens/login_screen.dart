@@ -50,7 +50,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         user: map['user'] as Map<String, dynamic>,
       );
       if (!mounted) return;
-      context.go('/home');
+      final user = map['user'] as Map<String, dynamic>;
+      if (user['must_reset_password'] == true) {
+        context.go('/change-password-required', extra: {'currentPassword': _password});
+      } else {
+        context.go('/home');
+      }
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {

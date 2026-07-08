@@ -36,7 +36,7 @@ class ProfileScreen extends ConsumerWidget {
     final qualified =
         leads.where((l) => l.temperature == LeadTemperature.hot).length;
     final booked =
-        stages.values.where((s) => s == LeadStage.booked).length;
+        stages.values.where((s) => s == LeadStage.closedWon).length;
     final convRate =
         leads.isEmpty ? null : ((booked / leads.length) * 100).round();
 
@@ -54,6 +54,10 @@ class ProfileScreen extends ConsumerWidget {
                 padding: const EdgeInsets.only(top: 6, bottom: 100),
                 children: [
                   _UserCard(profile: profile),
+                  const SizedBox(height: AppSpacing.md),
+
+                  // ── Organization (set up by the founder on the web app) ────
+                  const _OrgCard(),
                   const SizedBox(height: AppSpacing.md),
 
                   // ── Attendance (clock in/out) ─────────────────────────────
@@ -182,6 +186,12 @@ class ProfileScreen extends ConsumerWidget {
                       ),
                       const Divider(height: 1, indent: 16, endIndent: 16),
                       _SettingsRow(
+                        icon: Icons.key_outlined,
+                        label: 'Change Password',
+                        onTap: () => context.go('/change-password'),
+                      ),
+                      const Divider(height: 1, indent: 16, endIndent: 16),
+                      _SettingsRow(
                         icon: Icons.logout,
                         label: 'Log out',
                         iconColor: AppColors.alizarin,
@@ -263,6 +273,102 @@ class _UserCard extends ConsumerWidget {
             onTap: () => EditProfileSheet.show(context, profile),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ─── Organization card ──────────────────────────────────────────────────────
+
+/// Who the telecaller works for, as set up by the founder on the web app.
+/// Prefers the live `GET /api/auth/org` fetch (name/industry/logo/address);
+/// falls back to the org name already carried on the session (from login) so
+/// something still shows if the org-profile fetch fails or is loading.
+class _OrgCard extends ConsumerWidget {
+  const _OrgCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final session = ref.watch(sessionProvider);
+    final org = ref.watch(orgProfileProvider).value;
+
+    final name = org?.name ?? session.orgName ?? '';
+    if (name.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(AppRadius.xl),
+        border: Border.all(color: AppColors.westar),
+        boxShadow: AppShadows.card,
+      ),
+      child: Row(
+        children: [
+          _OrgLogo(url: org?.logoUrl),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name, style: AppText.display16),
+                if ((org?.industry ?? '').isNotEmpty)
+                  Text(
+                    org!.industry!,
+                    style: AppText.body13.copyWith(color: AppColors.schooner),
+                  ),
+                if ((org?.address ?? '').isNotEmpty)
+                  Text(
+                    org!.address!,
+                    style: AppText.caption11.copyWith(color: AppColors.tide),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OrgLogo extends StatelessWidget {
+  const _OrgLogo({required this.url});
+
+  final String? url;
+
+  @override
+  Widget build(BuildContext context) {
+    const size = 44.0;
+    if (url == null || url!.isEmpty) {
+      return Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: AppColors.pampas,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          border: Border.all(color: AppColors.westar),
+        ),
+        child: const Icon(Icons.business_outlined,
+            size: 20, color: AppColors.schooner),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      child: Image.network(
+        url!,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => Container(
+          width: size,
+          height: size,
+          color: AppColors.pampas,
+          child: const Icon(Icons.business_outlined,
+              size: 20, color: AppColors.schooner),
+        ),
       ),
     );
   }

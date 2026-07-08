@@ -3,10 +3,13 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:flutter_app_utilities/flutter_app_utilities.dart';
 
+import '../core/api/api_exception.dart';
 import '../data/lead_repository.dart';
 import '../models/lead.dart';
+import '../screens/call_detail_screen.dart';
 import '../state/providers.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
@@ -53,6 +56,7 @@ class _UploadRecordingSheetState
   String? _verdict;
   List<String> _keyPoints = const [];
   DateTime _callDate = DateTime.now();
+  String? _callId;
 
   bool get _busy =>
       _phase == _UpPhase.uploading || _phase == _UpPhase.processing;
@@ -80,7 +84,10 @@ class _UploadRecordingSheetState
 
     final picked = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['mp3', 'wav', 'm4a', 'ogg', 'mpeg', 'mp4'],
+      // 'opus' covers WhatsApp voice notes, which are shared as .opus files.
+      allowedExtensions: [
+        'mp3', 'wav', 'm4a', 'ogg', 'opus', 'aac', 'mpeg', 'mp4',
+      ],
     );
     final path = picked?.files.single.path;
     if (path == null) return;
@@ -96,15 +103,23 @@ class _UploadRecordingSheetState
     });
 
     final repo = ref.read(leadRepositoryProvider);
+    // Pull the lead's phone/source so the manual upload keys on phone (the
+    // backend's canonical key) and records the real acquisition source, matching
+    // the auto-capture path — previously the sheet sent neither.
+    final matches = ref.read(leadsProvider).where((l) => l.id == widget.leadId);
+    final lead = matches.isEmpty ? null : matches.first;
     try {
       final callId = await repo.uploadRecording(
         File(path),
         name: widget.leadName,
+        phone: lead?.phone,
+        source: lead?.source.name,
         contactKey: widget.leadId,
         callDate: _callDate,
       );
       if (!mounted) return;
       setState(() {
+        _callId = callId;
         _phase = _UpPhase.processing;
         _stageLabel = 'Transcribing…';
       });
@@ -138,9 +153,19 @@ class _UploadRecordingSheetState
       if (!mounted) return;
       setState(() {
         _phase = _UpPhase.error;
-        _error = e.toString();
+        _error = _describeError(e);
       });
     }
+  }
+
+  static String _describeError(Object e) {
+    if (e is ApiException) {
+      if (e.isNetworkError) return 'Network error — check your connection and retry.';
+      if (e.isUnauthorized) return 'Session expired — please log in again.';
+      if (e.isServerError) return 'Server error while processing the recording. Please retry.';
+      return e.message;
+    }
+    return e.toString();
   }
 
   static String _stageWord(String key) => switch (key) {
@@ -278,10 +303,30 @@ class _UploadRecordingSheetState
               width: double.infinity,
               child: _phase == _UpPhase.done
                   ? PrimaryButton(
-                      label: 'Done',
+                      label: 'View Score',
                       icon: Icons.check,
                       color: AppColors.greenHaze,
-                      onTap: () => Navigator.of(context).pop(),
+                      onTap: () {
+                        // Capture the router before popping — once the sheet's
+                        // route is popped, this context is on its way to being
+                        // deactivated and GoRouter.of(context) on a deactivated
+                        // context throws.
+                        final router = GoRouter.of(context);
+                        Navigator.of(context).pop();
+                        // Land straight on the Score tab — same rings +
+                        // breakdown the live-call flow shows immediately
+                        // after hanging up (PostCallScreen's Score tab),
+                        // instead of leaving the telecaller to find this
+                        // call in history and tap into it themselves.
+                        router.push(
+                          '/leads/${widget.leadId}/calls/$_callId',
+                          extra: CallDetailArgs(
+                            leadName: widget.leadName,
+                            calledAt: _callDate,
+                            initialTab: 1,
+                          ),
+                        );
+                      },
                     )
                   : SecondaryButton(
                       label: _busy
@@ -379,7 +424,7 @@ class _Dropzone extends StatelessWidget {
                       Text(
                         done
                             ? 'Tap to replace'
-                            : '.mp3 · .wav · .m4a · max 100 MB',
+                            : '.mp3 · .wav · .m4a · .opus · max 100 MB',
                         style: AppText.caption11
                             .copyWith(color: AppColors.schooner),
                         textAlign: TextAlign.center,

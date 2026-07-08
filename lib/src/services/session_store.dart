@@ -8,7 +8,15 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 /// this, what org, what role) — deliberately separate from
 /// `user_profile_store.dart`, which only models local display preferences.
 class Session {
-  const Session({this.token, this.userId, this.name, this.email, this.role, this.orgName});
+  const Session({
+    this.token,
+    this.userId,
+    this.name,
+    this.email,
+    this.role,
+    this.orgName,
+    this.mustResetPassword = false,
+  });
 
   final String? token;
   final String? userId;
@@ -16,6 +24,7 @@ class Session {
   final String? email;
   final String? role;
   final String? orgName;
+  final bool mustResetPassword;
 
   bool get isLoggedIn => token != null;
 
@@ -59,6 +68,17 @@ class SessionController extends Notifier<Session> {
     state = Session.empty;
   }
 
+  /// Called after a successful `POST /api/auth/change-password` so the
+  /// session's `mustResetPassword` clears without a full logout/re-login.
+  Future<void> clearMustResetPassword() async {
+    final userJson = await _storage.read(key: _userKey);
+    if (userJson == null) return;
+    final user = jsonDecode(userJson) as Map<String, dynamic>;
+    user['must_reset_password'] = false;
+    await _storage.write(key: _userKey, value: jsonEncode(user));
+    state = _sessionFrom(state.token!, user);
+  }
+
   static Session _sessionFrom(String token, Map<String, dynamic> user) => Session(
     token: token,
     userId: user['id'] as String?,
@@ -66,6 +86,7 @@ class SessionController extends Notifier<Session> {
     email: user['email'] as String?,
     role: user['role'] as String?,
     orgName: user['org_name'] as String?,
+    mustResetPassword: user['must_reset_password'] as bool? ?? false,
   );
 }
 

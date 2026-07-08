@@ -3,23 +3,56 @@ enum LeadTemperature { hot, warm, cold }
 enum LeadSource { meta, referral, event, inbound, website, organic }
 
 /// CRM pipeline stages for a lead, set manually by the telecaller.
-enum LeadStage { newLead, interested, siteVisit, booked, dead }
+///
+/// Mirrors the backend's `Lead.pipeline_stage` / `KANBAN_STAGES` exactly (see
+/// `dashboard.py`) so a stage set here round-trips through
+/// `PATCH /api/leads/by-contact/{contact_key}/stage` and shows up correctly on
+/// the founder web Kanban board, and vice versa.
+enum LeadStage {
+  newLead,
+  assigned,
+  contacted,
+  interested,
+  proposalSent,
+  negotiation,
+  closedWon,
+  closedLost,
+  junk,
+}
 
 extension LeadStageX on LeadStage {
-  String get value => name;
-
-  String get label => switch (this) {
+  /// Wire value — must match the backend's KANBAN_STAGES strings exactly
+  /// (e.g. "Proposal Sent", not "proposalSent").
+  String get value => switch (this) {
     LeadStage.newLead => 'New',
+    LeadStage.assigned => 'Assigned',
+    LeadStage.contacted => 'Contacted',
     LeadStage.interested => 'Interested',
-    LeadStage.siteVisit => 'Site Visit',
-    LeadStage.booked => 'Booked',
-    LeadStage.dead => 'Dead',
+    LeadStage.proposalSent => 'Proposal Sent',
+    LeadStage.negotiation => 'Negotiation',
+    LeadStage.closedWon => 'Closed Won',
+    LeadStage.closedLost => 'Closed Lost',
+    LeadStage.junk => 'Junk',
   };
 
-  static LeadStage fromValue(String? v) => LeadStage.values.firstWhere(
-    (e) => e.name == v,
-    orElse: () => LeadStage.newLead,
-  );
+  String get label => value;
+
+  /// Terminal, negative-outcome stages — styled the same way `dead` used to be.
+  bool get isTerminalNegative =>
+      this == LeadStage.closedLost || this == LeadStage.junk;
+
+  static LeadStage fromValue(String? v) => switch (v) {
+    'New' => LeadStage.newLead,
+    'Assigned' => LeadStage.assigned,
+    'Contacted' => LeadStage.contacted,
+    'Interested' => LeadStage.interested,
+    'Proposal Sent' => LeadStage.proposalSent,
+    'Negotiation' => LeadStage.negotiation,
+    'Closed Won' => LeadStage.closedWon,
+    'Closed Lost' => LeadStage.closedLost,
+    'Junk' => LeadStage.junk,
+    _ => LeadStage.newLead,
+  };
 }
 
 extension LeadTemperatureX on LeadTemperature {
@@ -336,6 +369,7 @@ class FollowUpTask {
     this.dueToday = false,
     this.scheduledAt,
     this.note,
+    this.backendId,
   });
 
   final String id;
@@ -352,6 +386,11 @@ class FollowUpTask {
   final DateTime? scheduledAt;
   /// Optional telecaller note saved alongside the scheduled call.
   final String? note;
+  /// The backend `FollowUp.id`, set once this task has synced to
+  /// `/api/follow-ups`. Null means it only exists locally so far (created
+  /// offline, or the initial sync call failed) — mark-done/delete then only
+  /// update the local copy until a future sync reconciles it.
+  final String? backendId;
 
   FollowUpTask copyWith({
     String? id,
@@ -364,6 +403,7 @@ class FollowUpTask {
     bool? dueToday,
     DateTime? scheduledAt,
     String? note,
+    String? backendId,
   }) => FollowUpTask(
     id: id ?? this.id,
     taskText: taskText ?? this.taskText,
@@ -375,6 +415,7 @@ class FollowUpTask {
     dueToday: dueToday ?? this.dueToday,
     scheduledAt: scheduledAt ?? this.scheduledAt,
     note: note ?? this.note,
+    backendId: backendId ?? this.backendId,
   );
 
   factory FollowUpTask.fromJson(Map<String, dynamic> json) => FollowUpTask(
@@ -390,6 +431,7 @@ class FollowUpTask {
         ? DateTime.tryParse(json['scheduled_at'] as String)
         : null,
     note: json['note'] as String?,
+    backendId: json['backend_id'] as String?,
   );
 
   Map<String, dynamic> toJson() => {
@@ -403,6 +445,7 @@ class FollowUpTask {
     'due_today': dueToday,
     'scheduled_at': scheduledAt?.toIso8601String(),
     'note': note,
+    'backend_id': backendId,
   };
 }
 

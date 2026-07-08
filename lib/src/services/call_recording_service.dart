@@ -100,23 +100,34 @@ class CallRecordingService {
   /// permission. Mirrors the overlay-permission flow already used natively.
   Future<void> openSettings() => openAppSettings();
 
-  /// Finds the most recently modified call recording.
+  /// Finds the call recording that best matches the call that just happened.
   ///
   /// [within] bounds how old a file may be and still be considered "the call
   /// that just happened" — defaults to 30 minutes so a recording isn't matched
   /// to an unrelated old file. Pass `null` to ignore recency entirely (e.g. for
   /// a manual "pick the latest recording" action).
   ///
+  /// [phoneHint] — when the lead's phone number is known, prefer a file whose
+  /// name contains that number (most OEM dialers embed the dialed number in the
+  /// recording filename, e.g. `Call recording 9876543210_251007.m4a`). This is
+  /// far more reliable than "newest file wins", which can grab an unrelated
+  /// recording made in the same window. Falls back to newest-in-window when no
+  /// filename matches the number.
+  ///
   /// Returns `null` if the platform is unsupported, no folder exists, or no
   /// audio file matches.
   Future<CallRecording?> findLatestRecording({
     Duration? within = const Duration(minutes: 30),
+    String? phoneHint,
   }) async {
     if (!_isAndroid) return null;
 
     final now = DateTime.now();
+    final digits = _phoneDigits(phoneHint);
     File? newest;
     DateTime? newestModified;
+    File? newestMatch;
+    DateTime? newestMatchModified;
 
     for (final dirPath in _candidateDirs) {
       final dir = Directory(dirPath);
@@ -141,11 +152,33 @@ class CallRecordingService {
           newest = entry;
           newestModified = modified;
         }
+        // Phone-matched candidate: filename (digits only) contains the number.
+        if (digits.isNotEmpty && _fileNameDigits(entry.path).contains(digits)) {
+          if (newestMatchModified == null || modified.isAfter(newestMatchModified)) {
+            newestMatch = entry;
+            newestMatchModified = modified;
+          }
+        }
       }
     }
 
-    if (newest == null) return null;
-    return CallRecording.fromFile(newest);
+    // A phone-matched recording wins over merely-newest; fall back otherwise.
+    final chosen = newestMatch ?? newest;
+    if (chosen == null) return null;
+    return CallRecording.fromFile(chosen);
+  }
+
+  /// Last 10 digits of a phone number (drops +91 / spaces / separators) so a
+  /// number matches regardless of how the dialer formatted it in the filename.
+  static String _phoneDigits(String? phone) {
+    if (phone == null) return '';
+    final d = phone.replaceAll(RegExp(r'\D'), '');
+    return d.length > 10 ? d.substring(d.length - 10) : d;
+  }
+
+  static String _fileNameDigits(String path) {
+    final name = path.split(Platform.pathSeparator).last;
+    return name.replaceAll(RegExp(r'\D'), '');
   }
 
   bool _isAudioFile(String path) {

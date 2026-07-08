@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../screens/add_outbound_lead_screen.dart';
 import '../screens/call_detail_screen.dart';
+import '../screens/change_password_screen.dart';
 import '../screens/dialer_screen.dart';
 import '../screens/lead_detail_screen.dart';
 import '../screens/login_screen.dart';
@@ -18,14 +19,34 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     initialLocation: '/login',
     refreshListenable: _SessionRefreshListenable(ref),
     redirect: (context, state) {
-      final loggedIn = ref.read(sessionProvider).isLoggedIn;
+      final session = ref.read(sessionProvider);
+      final loggedIn = session.isLoggedIn;
       final onLoginPage = state.matchedLocation == '/login';
+      const changePasswordPath = '/change-password-required';
+      final onChangePasswordPage = state.matchedLocation == changePasswordPath;
       if (!loggedIn && !onLoginPage) return '/login';
       if (loggedIn && onLoginPage) return '/home';
+      // A temp password from an invite/reset must be changed before anything
+      // else is reachable — blocks deep links and tab restoration too, not
+      // just the initial post-login navigation.
+      if (loggedIn && session.mustResetPassword && !onChangePasswordPage) {
+        return changePasswordPath;
+      }
       return null;
     },
     routes: [
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
+      GoRoute(
+        path: '/change-password-required',
+        builder: (context, state) => ChangePasswordScreen(
+          forced: true,
+          knownCurrentPassword: (state.extra as Map?)?['currentPassword'] as String?,
+        ),
+      ),
+      GoRoute(
+        path: '/change-password',
+        builder: (context, state) => const ChangePasswordScreen(forced: false),
+      ),
       GoRoute(path: '/home', builder: (context, state) => const MainShell()),
       GoRoute(
         path: '/leads/:id',

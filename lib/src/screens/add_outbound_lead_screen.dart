@@ -6,12 +6,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_app_utilities/flutter_app_utilities.dart';
 
+import '../core/api/api_exception.dart';
 import '../data/lead_repository.dart';
 import '../models/lead.dart';
 import '../state/providers.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import '../widgets/leadpilot_widgets.dart';
+import 'call_detail_screen.dart';
 
 /// Where the picked recording is in the upload → transcribe → analyse flow.
 enum _UploadPhase { idle, uploading, processing, done, error }
@@ -34,6 +36,7 @@ class _AddOutboundLeadScreenState extends ConsumerState<AddOutboundLeadScreen> {
   List<String> _keyPoints = const [];
   bool _saving = false;
   DateTime _callDate = DateTime.now();
+  String? _callId;
 
   String _fmtDate(DateTime d) {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -67,7 +70,10 @@ class _AddOutboundLeadScreenState extends ConsumerState<AddOutboundLeadScreen> {
 
     final picked = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['mp3', 'wav', 'm4a', 'ogg', 'mpeg', 'mp4'],
+      // 'opus' covers WhatsApp voice notes, which are shared as .opus files.
+      allowedExtensions: [
+        'mp3', 'wav', 'm4a', 'ogg', 'opus', 'aac', 'mpeg', 'mp4',
+      ],
     );
     final path = picked?.files.single.path;
     if (path == null) return; // cancelled
@@ -94,6 +100,7 @@ class _AddOutboundLeadScreenState extends ConsumerState<AddOutboundLeadScreen> {
       );
       if (!mounted) return;
       setState(() {
+        _callId = callId;
         _phase = _UploadPhase.processing;
         _stageLabel = 'Transcribing…';
       });
@@ -126,9 +133,19 @@ class _AddOutboundLeadScreenState extends ConsumerState<AddOutboundLeadScreen> {
       if (!mounted) return;
       setState(() {
         _phase = _UploadPhase.error;
-        _error = e.toString();
+        _error = _describeUploadError(e);
       });
     }
+  }
+
+  static String _describeUploadError(Object e) {
+    if (e is ApiException) {
+      if (e.isNetworkError) return 'Network error — check your connection and retry.';
+      if (e.isUnauthorized) return 'Session expired — please log in again.';
+      if (e.isServerError) return 'Server error while processing the recording. Please retry.';
+      return e.message;
+    }
+    return e.toString();
   }
 
   static String _stageWord(String key) {
@@ -168,10 +185,16 @@ class _AddOutboundLeadScreenState extends ConsumerState<AddOutboundLeadScreen> {
   Future<void> _saveLead() async {
     final key = await _createLead();
     if (key != null && mounted) {
-      if (_phase == _UploadPhase.done) {
-        // Recording was uploaded — jump straight to lead detail so the
-        // call appears in the history without an extra navigation step.
-        context.go('/leads/$key');
+      if (_phase == _UploadPhase.done && _callId != null) {
+        // Recording was uploaded and analysed — jump straight to its Score
+        // tab, same as the live-call flow shows immediately after hanging
+        // up (PostCallScreen), instead of leaving the telecaller to find
+        // this call in the lead's history and tap into it themselves.
+        final name = ref.read(outboundLeadDraftProvider).name.trim();
+        context.go(
+          '/leads/$key/calls/$_callId',
+          extra: CallDetailArgs(leadName: name, calledAt: _callDate, initialTab: 1),
+        );
       } else {
         context.pop();
       }
@@ -532,7 +555,7 @@ class _RecordingDropzone extends StatelessWidget {
                     Text(
                       done
                           ? 'Tap to replace'
-                          : '.mp3, .wav, .m4a, .ogg - max 100 MB',
+                          : '.mp3, .wav, .m4a, .ogg, .opus - max 100 MB',
                       style: AppText.caption11
                           .copyWith(color: AppColors.schooner),
                       textAlign: TextAlign.center,

@@ -16,10 +16,16 @@ import '../widgets/schedule_call_sheet.dart';
 /// [CallRecord] (Lead Detail's history list) so this screen doesn't have to
 /// re-fetch the lead's name / this call's date for the header.
 class CallDetailArgs {
-  const CallDetailArgs({this.leadName, this.calledAt});
+  const CallDetailArgs({this.leadName, this.calledAt, this.initialTab});
 
   final String? leadName;
   final DateTime? calledAt;
+
+  /// Tab to open on (0 Summary / 1 Score / 2 Transcript). Used to land
+  /// straight on Score right after an upload finishes processing, since
+  /// that's the whole point of the screen the user just waited through —
+  /// same tab index [PostCallScreen] uses for its own Score tab.
+  final int? initialTab;
 }
 
 /// Read-only view of one specific historical call — the exact recording that
@@ -44,7 +50,7 @@ class CallDetailScreen extends ConsumerStatefulWidget {
 
 class _CallDetailScreenState extends ConsumerState<CallDetailScreen> {
   late Future<_CallDetailData> _future;
-  int _tab = 0;
+  late int _tab;
   bool _showEnglish = false;
   List<TranscriptTurn>? _translated;
   bool _translating = false;
@@ -54,6 +60,7 @@ class _CallDetailScreenState extends ConsumerState<CallDetailScreen> {
   @override
   void initState() {
     super.initState();
+    _tab = widget.args?.initialTab ?? 0;
     _future = _load();
     _searchController.addListener(() {
       setState(() => _query = _searchController.text.trim().toLowerCase());
@@ -173,6 +180,11 @@ class _CallDetailScreenState extends ConsumerState<CallDetailScreen> {
             final data = snapshot.data!;
             final overall = _toInt(data.score['rings']?['overall']?['value']) ??
                 _toInt(data.analysis['agent_debrief']?['total_score']);
+            // Junk / not-relevant calls have no meaningful score — the analyzer
+            // zeroes every dimension (see lead_analyzer's not-relevant branch),
+            // so a hero "0" ring reads as a bug. Hide it and let the Score tab
+            // render the "Not a qualifying lead" empty-state instead.
+            final notQualifying = _isNotQualifying(data.score);
             final duration = _approxDuration(data.transcript.turns);
             final activeTurns = _showEnglish && _translated != null
                 ? _translated!
@@ -185,7 +197,7 @@ class _CallDetailScreenState extends ConsumerState<CallDetailScreen> {
                   leadName: widget.args?.leadName ?? '',
                   calledAt: widget.args?.calledAt,
                   duration: duration,
-                  heroScore: overall,
+                  heroScore: notQualifying ? null : overall,
                   tab: _tab,
                   onTabChanged: (i) => setState(() => _tab = i),
                 ),
@@ -226,6 +238,17 @@ class _CallDetailScreenState extends ConsumerState<CallDetailScreen> {
   }
 
   static int? _toInt(Object? v) => v is num ? v.round() : null;
+
+  /// A call the analyzer judged off-topic / wrong-number / spam. The backend
+  /// marks these `analysis_status == 'not_relevant'` with verdict `Junk` and
+  /// zeroes every dimension, so the Score tab shows an empty-state instead of
+  /// a grid of misleading 0-rings.
+  static bool _isNotQualifying(Map<String, dynamic> score) {
+    if (score.isEmpty) return false;
+    final status = (score['analysis_status'] ?? '').toString();
+    final verdict = (score['verdict'] ?? '').toString().toLowerCase();
+    return status == 'not_relevant' || verdict == 'junk';
+  }
 
   /// Approximates call length from the last transcript turn's `MM:SS`
   /// timestamp. The backend doesn't store a real duration field yet.
@@ -791,6 +814,18 @@ class _ScoreTab extends StatelessWidget {
         ? rings['sentiment_timeline'] as Map<String, dynamic>
         : const <String, dynamic>{};
 
+    // Off-topic / wrong-number / spam call: the analyzer zeroed every
+    // dimension, so a grid of 0-rings + all-zero breakdown reads as broken.
+    // Show why it wasn't scored instead.
+    final status = (rings['analysis_status'] ?? '').toString();
+    final verdict = (rings['verdict'] ?? '').toString();
+    if (status == 'not_relevant' || verdict.toLowerCase() == 'junk') {
+      return _NotQualifyingLead(
+        reason: (rings['relevance_reason'] ?? '').toString(),
+        timeline: timeline,
+      );
+    }
+
     return ListView(
       padding: const EdgeInsets.all(AppSpacing.md),
       children: [
@@ -840,6 +875,78 @@ class _ScoreTab extends StatelessWidget {
 
   static int _val(Object? ring) => ring is Map ? (_num(ring['value'])) : 0;
   static int _num(Object? v) => v is num ? v.round() : 0;
+}
+
+/// Empty-state for a call the analyzer judged off-topic / wrong-number / spam.
+/// Replaces the rings + breakdown (which would all be zero) with a clear
+/// explanation. Sentiment is still real, so its timeline is kept if present.
+class _NotQualifyingLead extends StatelessWidget {
+  const _NotQualifyingLead({required this.reason, required this.timeline});
+
+  final String reason;
+  final Map<String, dynamic> timeline;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasTimeline =
+        timeline['segments'] is List && (timeline['segments'] as List).isNotEmpty;
+
+    return ListView(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      children: [
+        LpCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Icon(Icons.filter_alt_off_outlined,
+                  size: 40, color: AppColors.schooner),
+              const AppGap.sm(),
+              Center(
+                child: Text('Not a qualifying lead',
+                    style: AppText.display16, textAlign: TextAlign.center),
+              ),
+              const AppGap.xs(),
+              Center(
+                child: Text(
+                  'This call was flagged off-topic, a wrong number, or spam, '
+                  'so it isn’t scored on the sales dimensions.',
+                  style: AppText.body14.copyWith(color: AppColors.schooner),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              if (reason.trim().isNotEmpty) ...[
+                const AppGap.md(),
+                Container(
+                  padding: const EdgeInsets.all(AppSpacing.sm),
+                  decoration: BoxDecoration(
+                    color: AppColors.pampas,
+                    borderRadius: BorderRadius.circular(AppRadius.xs),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.info_outline,
+                          size: 14, color: AppColors.schooner),
+                      const AppGap.xs(axis: Axis.horizontal),
+                      Expanded(
+                        child: Text(reason,
+                            style: AppText.caption11
+                                .copyWith(color: AppColors.schooner)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (hasTimeline) ...[
+          const AppGap.md(),
+          _SentimentTimelineCard(timeline: timeline),
+        ],
+      ],
+    );
+  }
 }
 
 class _RingTile extends StatelessWidget {
@@ -914,9 +1021,45 @@ class _BreakdownRow extends StatelessWidget {
             Text((item['note']).toString(),
                 style: AppText.caption11.copyWith(color: AppColors.schooner)),
           ],
+          // Audit trail: the backend attaches the transcript quotes the score
+          // was grounded in (evidence: [{turn,t,speaker,text}]). Surface them so
+          // a manager can verify why a dimension scored the way it did.
+          for (final q in _evidence(item['evidence'])) ...[
+            const AppGap.xs(),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 2,
+                  height: 14,
+                  margin: const EdgeInsets.only(top: 2, right: 8),
+                  color: AppColors.iceCold,
+                ),
+                Expanded(
+                  child: Text(
+                    '${(q['speaker'] ?? '').toString().isNotEmpty ? '${q['speaker']}: ' : ''}“${(q['text'] ?? '').toString()}”',
+                    style: AppText.caption11.copyWith(
+                      color: AppColors.schooner,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  /// Auditable quotes for this dimension, defensively parsed — each is a
+  /// `{turn, t, speaker, text}` map with a non-empty `text`.
+  static List<Map> _evidence(Object? raw) {
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .where((e) => (e['text'] ?? '').toString().trim().isNotEmpty)
+        .toList();
   }
 }
 

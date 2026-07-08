@@ -84,6 +84,22 @@ class AnalysisBreakdownItem {
   }
 }
 
+/// One slice of the sentiment timeline bar. `label` is the backend's
+/// frustrated|cautious|neutral|interested bucket; the widget maps it to a colour.
+class SentimentSegment {
+  const SentimentSegment({required this.label, required this.avgScore});
+
+  final String label;
+  final double avgScore; // -1.0..1.0
+
+  factory SentimentSegment.fromJson(Map<String, dynamic> json) => SentimentSegment(
+        label: (json['label'] ?? 'neutral').toString(),
+        avgScore: (json['avg_score'] is num) ? (json['avg_score'] as num).toDouble() : 0.0,
+      );
+
+  Map<String, dynamic> toJson() => {'label': label, 'avg_score': avgScore};
+}
+
 /// A suggested follow-up action.
 class AnalysisNextStep {
   const AnalysisNextStep({required this.title, required this.action});
@@ -109,6 +125,7 @@ class CallAnalysis {
     required this.breakdown,
     required this.sentimentNote,
     required this.followUpSuggestion,
+    this.sentimentTimeline = const [],
   });
 
   final String summary;
@@ -118,6 +135,8 @@ class CallAnalysis {
   final List<AnalysisBreakdownItem> breakdown;
   final String sentimentNote;
   final String followUpSuggestion;
+  /// Real per-slice sentiment from `/score` (was hardcoded bars in the UI).
+  final List<SentimentSegment> sentimentTimeline;
 
   factory CallAnalysis.fromJson(Map<String, dynamic> json) {
     List<T> list<T>(Object? raw, T Function(Map<String, dynamic>) f) => [
@@ -139,6 +158,7 @@ class CallAnalysis {
       breakdown: list(json['breakdown'], AnalysisBreakdownItem.fromJson),
       sentimentNote: (json['sentimentNote'] ?? '').toString(),
       followUpSuggestion: (json['followUpSuggestion'] ?? '').toString(),
+      sentimentTimeline: list(json['sentimentTimeline'], SentimentSegment.fromJson),
     );
   }
 }
@@ -187,20 +207,53 @@ class CallTranscription {
 ///   * poll `GET /api/calls/{id}/processing-status` until `done`/`failed`.
 ///   * `GET /api/calls/{id}/transcript` + `/lead-analysis` → assemble result.
 class TranscriptionService {
-  const TranscriptionService();
+  const TranscriptionService({String? Function()? getToken}) : _getToken = getToken;
 
   static const Duration _pollInterval = Duration(seconds: 3);
   static const Duration _pollTimeout = Duration(minutes: 5);
+
+  /// Returns the current session's JWT, or null when logged out. Attached to
+  /// every request this service makes (upload + status/transcript/analysis
+  /// polling) — without it the backend can't stamp org_id/telecaller_id on
+  /// the created call, so it never shows up in this telecaller's org-scoped
+  /// `/api/inbox`, even though transcription + analysis complete fine.
+  final String? Function()? _getToken;
+
+  Map<String, String> get _authHeaders {
+    final token = _getToken?.call();
+    return {
+      ...ApiConfig.defaultHeaders,
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+  }
 
   /// [onProgress] is called on every poll tick with the backend's current
   /// stage key (e.g. `"transcribe"`, `"analyse"`) and a 0–100 percent value.
   Future<CallTranscription> transcribe({
     required CallRecording recording,
     required String leadId,
+    String? name,
+    String? phone,
+    String? source,
+    String? contactKey,
+    String? existingCallId,
+    void Function(String callId)? onCallId,
     void Function(String stage, int percent)? onProgress,
   }) async {
     onProgress?.call('upload', 5);
-    final callId = await _upload(recording: recording, leadId: leadId);
+    // Reuse a previously-uploaded call (from the local ledger) instead of
+    // re-uploading the same recording file — avoids a redundant upload +
+    // re-processing round-trip after an app restart / folder re-scan.
+    final callId = existingCallId ??
+        await _upload(
+          recording: recording,
+          leadId: leadId,
+          name: name,
+          phone: phone,
+          source: source,
+          contactKey: contactKey,
+        );
+    onCallId?.call(callId);
     onProgress?.call('upload', 20);
     await _pollUntilProcessed(callId, onProgress: onProgress);
     return _assemble(callId);
@@ -209,6 +262,10 @@ class TranscriptionService {
   Future<String> _upload({
     required CallRecording recording,
     required String leadId,
+    String? name,
+    String? phone,
+    String? source,
+    String? contactKey,
   }) async {
     final file = recording.file;
     if (!file.existsSync()) {
@@ -216,11 +273,23 @@ class TranscriptionService {
     }
 
     final uri = ApiConfig.uri(ApiEndpoints.uploadRecording);
+    final token = _getToken?.call();
     final request = http.MultipartRequest('POST', uri)
-      // The backend slugifies `name` into the contact_key it keys analysis +
-      // memory by. Passing the lead id keeps this call grouped with the lead.
-      ..fields['name'] = leadId
+      // `name` is the human-readable label; `contact_key_override` is the exact
+      // key the backend groups analysis + memory by, so an auto-captured call
+      // attaches to the right lead instead of being re-slugified from a display
+      // name. `phone` lets the backend key by number (its canonical key), and
+      // `call_date` preserves the real recording time (not upload time).
+      ..fields['name'] = (name != null && name.isNotEmpty) ? name : leadId
+      ..fields['call_date'] = recording.recordedAt.toIso8601String()
       ..files.add(await http.MultipartFile.fromPath('file', recording.path));
+    if (phone != null && phone.isNotEmpty) request.fields['phone'] = phone;
+    if (source != null && source.isNotEmpty) request.fields['source'] = source;
+    // Default the override to leadId (the lead's contact_key) so the call always
+    // attaches to this lead even when phone is missing.
+    request.fields['contact_key_override'] =
+        (contactKey != null && contactKey.isNotEmpty) ? contactKey : leadId;
+    if (token != null) request.headers['Authorization'] = 'Bearer $token';
 
     http.StreamedResponse streamed;
     try {
@@ -264,7 +333,7 @@ class TranscriptionService {
       http.Response res;
       try {
         res = await http
-            .get(uri, headers: ApiConfig.defaultHeaders)
+            .get(uri, headers: _authHeaders)
             .timeout(ApiConfig.timeout);
       } catch (e) {
         if (DateTime.now().isAfter(deadline)) {
@@ -315,8 +384,18 @@ class TranscriptionService {
   ///   - `/score`         → rings with real telecaller value, breakdown notes, trends
   ///
   /// Either can 404 without breaking the other (analysis may not be ready yet).
+  ///
+  /// By the time this runs, [_pollUntilProcessed] has already confirmed the
+  /// backend finished transcribing + analysing and durably saved the call —
+  /// so a transient hiccup fetching the transcript here must not surface as
+  /// "transcription failed" (it didn't; only this *read* did). Previously an
+  /// unwrapped `_getJson` here meant one flaky request threw, the whole
+  /// capture flow landed on the misleading "Cannot reach the transcription
+  /// server" error, and — since that exception skipped the success path —
+  /// the lead's call history was never refreshed, so an already-saved
+  /// recording looked like it never saved at all.
   Future<CallTranscription> _assemble(String callId) async {
-    final tBody = await _getJson(ApiEndpoints.transcript(callId));
+    final tBody = await _getJsonResilient(ApiEndpoints.transcript(callId));
     final transcript = tBody['transcript'] is Map<String, dynamic>
         ? tBody['transcript'] as Map<String, dynamic>
         : const <String, dynamic>{};
@@ -351,7 +430,7 @@ class TranscriptionService {
 
   Future<Map<String, dynamic>> _getJson(String path) async {
     final res = await http
-        .get(ApiConfig.uri(path), headers: ApiConfig.defaultHeaders)
+        .get(ApiConfig.uri(path), headers: _authHeaders)
         .timeout(ApiConfig.timeout);
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw ApiException('GET $path failed (${res.statusCode}).',
@@ -366,6 +445,19 @@ class TranscriptionService {
       return await _getJson(path);
     } catch (_) {
       return const {};
+    }
+  }
+
+  /// Like [_getJsonOrEmpty] but retries once after a short delay before
+  /// giving up — for the transcript fetch, which is the primary payload (not
+  /// a nice-to-have like `/score`), so it's worth one extra attempt against a
+  /// transient blip rather than immediately degrading to an empty transcript.
+  Future<Map<String, dynamic>> _getJsonResilient(String path) async {
+    try {
+      return await _getJson(path);
+    } catch (_) {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      return _getJsonOrEmpty(path);
     }
   }
 
@@ -404,6 +496,13 @@ class TranscriptionService {
     }
 
     final hasScore = rings.isNotEmpty;
+
+    // Sentiment timeline from /score: real per-slice segments + a data-derived
+    // caption (was a hardcoded bar + a fabricated "warmed up at 3:54" string).
+    final timeline = scoreData['sentiment_timeline'] is Map<String, dynamic>
+        ? scoreData['sentiment_timeline'] as Map<String, dynamic>
+        : const <String, dynamic>{};
+    final timelineCaption = (timeline['caption'] ?? '').toString();
 
     // Breakdown from /score includes real per-dimension notes from the LLM debrief.
     // Falls back to debrief scores with empty notes when /score is unavailable.
@@ -447,7 +546,13 @@ class TranscriptionService {
         'sentiment': ringVal('sentiment'),
       },
       'breakdown': breakdown,
-      'sentimentNote': (summary['overall_tone'] ?? '').toString(),
+      // Real sentiment timeline from /score (segments + caption). Falls back to
+      // the overall_tone word when /score didn't return a timeline.
+      'sentimentTimeline': timeline['segments'] is List ? timeline['segments'] : const [],
+      'sentimentNote': (timelineCaption.isNotEmpty
+              ? timelineCaption
+              : (summary['overall_tone'] ?? '').toString())
+          .toString(),
       'followUpSuggestion':
           (nextAction['follow_up_script'] ?? nextAction['recommended_action'] ?? '')
               .toString(),

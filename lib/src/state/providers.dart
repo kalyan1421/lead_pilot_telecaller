@@ -9,8 +9,10 @@ import '../core/api/api_config.dart';
 import '../core/api/api_exception.dart';
 import '../core/api/http_api_client.dart';
 import '../data/attendance_repository.dart';
+import '../data/follow_up_repository.dart';
 import '../data/lead_repository.dart';
 import '../data/mock_leads.dart';
+import '../data/org_profile_repository.dart';
 import '../models/attendance_record.dart';
 import '../models/lead.dart';
 import '../services/local_call_store.dart';
@@ -29,13 +31,39 @@ final apiClientProvider = Provider<ApiClient>(
 
 /// Maps the FastAPI "AI layer" responses into the app's domain models.
 final leadRepositoryProvider = Provider<LeadRepository>(
-  (ref) => LeadRepository(ref.watch(apiClientProvider)),
+  (ref) => LeadRepository(
+    ref.watch(apiClientProvider),
+    getToken: () => ref.read(sessionProvider).token,
+  ),
 );
 
 /// Talks to the attendance (clock in/out) endpoints.
 final attendanceRepositoryProvider = Provider<AttendanceRepository>(
   (ref) => AttendanceRepository(ref.watch(apiClientProvider)),
 );
+
+/// Talks to the follow-up endpoints.
+final followUpRepositoryProvider = Provider<FollowUpRepository>(
+  (ref) => FollowUpRepository(ref.watch(apiClientProvider)),
+);
+
+/// Talks to the org-profile endpoint.
+final orgProfileRepositoryProvider = Provider<OrgProfileRepository>(
+  (ref) => OrgProfileRepository(ref.watch(apiClientProvider)),
+);
+
+/// The telecaller's org (name/logo/address/etc.), set up by the founder on
+/// the web app — feeds the Profile screen's org card. Resolves to null (not
+/// an error state) when mock data is on or the fetch fails, so the screen can
+/// quietly fall back to the org name already carried on [sessionProvider].
+final orgProfileProvider = FutureProvider<OrgProfile?>((ref) async {
+  if (ApiConfig.useMockData) return null;
+  try {
+    return await ref.read(orgProfileRepositoryProvider).fetch();
+  } catch (_) {
+    return null;
+  }
+});
 
 // ─── Leads (inbox) ────────────────────────────────────────────────────────────
 
@@ -93,10 +121,14 @@ class LeadsController extends Notifier<List<Lead>> {
       state = [for (final l in fetched) _withOverride(l)];
       ref.read(leadsUsingFallbackProvider.notifier).set(false);
     } catch (_) {
-      // Backend unreachable — keep the app usable on mock data, but flag it
-      // so the UI can tell the telecaller these aren't live leads.
-      state = [for (final l in mockLeads) _withOverride(l)];
-      ref.read(leadsUsingFallbackProvider.notifier).set(true);
+      // Backend unreachable. Only fall back to mock data if nothing real has
+      // ever loaded — a transient failure on a later refresh (expired token,
+      // one-off 5xx) must NOT clobber a working inbox with fake leads; that
+      // was the "stuck showing stale/cached data" bug.
+      if (state.isEmpty) {
+        state = [for (final l in mockLeads) _withOverride(l)];
+        ref.read(leadsUsingFallbackProvider.notifier).set(true);
+      }
     }
   }
 
@@ -109,13 +141,28 @@ class LeadsController extends Notifier<List<Lead>> {
   Future<void> enrich(String contactKey) async {
     if (ApiConfig.useMockData || contactKey.isEmpty) return;
     try {
-      final detailed =
-          await ref.read(leadRepositoryProvider).leadDetail(contactKey);
+      final result =
+          await ref.read(leadRepositoryProvider).leadDetailWithStage(contactKey);
       state = [
         for (final lead in state)
-          if (lead.id == contactKey) _withOverride(detailed) else lead,
+          if (lead.id == contactKey) _withOverride(result.lead) else lead,
       ];
+      // Read back the authoritative kanban stage (server wins) so a move made on
+      // the web dashboard is reflected here too. Fail-soft / fire-and-forget.
+      final stage = result.stage;
+      if (stage != null && stage.isNotEmpty) {
+        unawaited(ref.read(leadStageProvider.notifier).syncFromServer(contactKey, stage));
+      }
     } catch (_) {/* keep the thin card */}
+  }
+
+  /// Recompute a contact's memory bubble from all their calls, then re-enrich
+  /// so the refreshed bubble shows immediately. Throws on failure so the caller
+  /// can surface a toast (unlike [enrich], which is fire-and-forget).
+  Future<void> rebuildMemory(String contactKey) async {
+    if (ApiConfig.useMockData || contactKey.isEmpty) return;
+    await ref.read(leadRepositoryProvider).rebuildMemory(contactKey);
+    await enrich(contactKey);
   }
 
   /// Persist a manual edit to a lead and reflect it immediately everywhere.
@@ -144,22 +191,82 @@ class FollowUpController extends Notifier<List<FollowUpTask>> {
   }
 
   Future<void> _load() async {
-    state = await ref.read(localFollowUpStoreProvider).loadAll();
+    final local = await ref.read(localFollowUpStoreProvider).loadAll();
+    state = local;
+    // Additive read-back: pull the backend's follow-ups and surface any this
+    // device doesn't already have locally (created on the web dashboard or
+    // another device). Purely additive + keyed on backendId, so it can never
+    // duplicate or clobber a local task; fail-soft on any error.
+    try {
+      final remote = await ref.read(followUpRepositoryProvider).list();
+      final knownBackendIds = {
+        for (final t in local)
+          if (t.backendId != null) t.backendId,
+      };
+      final extras = [
+        for (final r in remote)
+          if (r.backendId != null && !knownBackendIds.contains(r.backendId)) r,
+      ];
+      if (extras.isNotEmpty) state = [...local, ...extras];
+    } catch (_) {
+      // Offline / backend down — local remains the source of truth.
+    }
   }
 
+  /// Local write is the source of truth for this screen (matches this app's
+  /// existing fail-soft pattern); the backend sync is best-effort so a
+  /// flaky/offline connection never blocks scheduling a follow-up.
   Future<void> schedule(FollowUpTask task) async {
     await ref.read(localFollowUpStoreProvider).add(task);
     unawaited(_load());
+    try {
+      final backendId = await ref.read(followUpRepositoryProvider).create(
+        leadId: task.leadId,
+        note: task.taskText,
+        dueAt: task.scheduledAt ?? DateTime.now(),
+      );
+      if (backendId.isNotEmpty) {
+        await ref.read(localFollowUpStoreProvider).update(
+          task.copyWith(backendId: backendId),
+        );
+        unawaited(_load());
+      }
+    } catch (_) {
+      // Fail soft — stays local-only until the next successful sync.
+    }
   }
 
   Future<void> markDone(String id) async {
+    final backendId = _backendIdFor(id);
     await ref.read(localFollowUpStoreProvider).markDone(id);
     unawaited(_load());
+    if (backendId != null) {
+      try {
+        await ref.read(followUpRepositoryProvider).setCompleted(backendId, true);
+      } catch (_) {
+        // Fail soft — local state already reflects "done".
+      }
+    }
   }
 
   Future<void> delete(String id) async {
+    final backendId = _backendIdFor(id);
     await ref.read(localFollowUpStoreProvider).delete(id);
     unawaited(_load());
+    if (backendId != null) {
+      try {
+        await ref.read(followUpRepositoryProvider).delete(backendId);
+      } catch (_) {
+        // Fail soft — local state already reflects the deletion.
+      }
+    }
+  }
+
+  String? _backendIdFor(String id) {
+    for (final task in state) {
+      if (task.id == id) return task.backendId;
+    }
+    return null;
   }
 }
 
@@ -407,7 +514,45 @@ class LeadStageController extends Notifier<Map<String, LeadStage>> {
     } catch (_) {}
   }
 
-  Future<void> setStage(String leadId, LeadStage stage) async {
+  Future<void> setStage(
+    String leadId,
+    LeadStage stage, {
+    int? dealValue,
+    int? listPrice,
+    double? discountPct,
+  }) async {
+    // Optimistic local update first (keeps the UI responsive / offline-usable,
+    // matching this app's existing fail-soft pattern), then push to the
+    // backend so the founder's web Kanban sees the move too.
+    state = {...state, leadId: stage};
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _key,
+      jsonEncode({for (final e in state.entries) e.key: e.value.value}),
+    );
+    try {
+      await ref.read(leadRepositoryProvider).updateLeadStage(
+        leadId,
+        stage,
+        dealValue: dealValue,
+        listPrice: listPrice,
+        discountPct: discountPct,
+      );
+    } catch (_) {
+      // Fail soft: local state already reflects the move; the next successful
+      // sync (or a future outbox/retry mechanism) will reconcile the backend.
+    }
+  }
+
+  LeadStage stageFor(String leadId) => state[leadId] ?? LeadStage.newLead;
+
+  /// Read-back: adopt the authoritative server stage (e.g. moved on the web
+  /// dashboard) when it differs from what's stored locally. Server wins, mirroring
+  /// the follow-ups read-back — the local value was itself pushed to the server on
+  /// the last move, so a divergence means someone else changed it.
+  Future<void> syncFromServer(String leadId, String serverStageValue) async {
+    final stage = LeadStageX.fromValue(serverStageValue);
+    if (state[leadId] == stage) return;
     state = {...state, leadId: stage};
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
@@ -415,8 +560,6 @@ class LeadStageController extends Notifier<Map<String, LeadStage>> {
       jsonEncode({for (final e in state.entries) e.key: e.value.value}),
     );
   }
-
-  LeadStage stageFor(String leadId) => state[leadId] ?? LeadStage.newLead;
 }
 
 // ─── Attendance (clock in/out) ────────────────────────────────────────────────
@@ -469,7 +612,13 @@ final attendanceProvider =
 class AttendanceController extends Notifier<AttendanceState> {
   @override
   AttendanceState build() {
-    _load();
+    // _load() touches `state` on its very first line (before any `await`), and Dart
+    // runs an async function synchronously up to its first `await` — so calling it
+    // directly here executes that `state` read/write while build() is still on the
+    // stack, before Riverpod has finished initializing this provider ("Tried to read
+    // the state of an uninitialized provider"). Future.microtask defers it to run
+    // right after build() returns, once the provider is actually initialized.
+    Future.microtask(_load);
     return const AttendanceState(loading: true);
   }
 
@@ -497,6 +646,10 @@ class AttendanceController extends Notifier<AttendanceState> {
     } on ApiException catch (e) {
       if (e.statusCode == 409) {
         await _load();
+        // _load()'s copyWith doesn't touch actionInProgress, so it would
+        // otherwise stay stuck true (from the line above) forever — leaving
+        // the Check In/Out button permanently disabled/spinning.
+        state = state.copyWith(actionInProgress: false);
         return;
       }
       state = state.copyWith(actionInProgress: false, error: e.message);
@@ -514,6 +667,9 @@ class AttendanceController extends Notifier<AttendanceState> {
     } on ApiException catch (e) {
       if (e.statusCode == 409) {
         await _load();
+        // See the matching comment in checkIn() — actionInProgress must be
+        // reset explicitly or the button stays stuck busy after a 409 race.
+        state = state.copyWith(actionInProgress: false);
         return;
       }
       state = state.copyWith(actionInProgress: false, error: e.message);

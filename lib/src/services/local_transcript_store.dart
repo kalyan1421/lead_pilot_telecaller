@@ -65,6 +65,9 @@ class LocalTranscriptStore {
     ],
     'sentimentNote': a.sentimentNote,
     'followUpSuggestion': a.followUpSuggestion,
+    'sentimentTimeline': [
+      for (final s in a.sentimentTimeline) s.toJson(),
+    ],
   };
 }
 

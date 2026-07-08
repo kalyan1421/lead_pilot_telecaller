@@ -16,15 +16,22 @@ class ApiEnvironment {
 
   // `dev` points at the local FastAPI "AI layer" backend (voicesummary-main),
   // which serves /api/inbox, /api/leads, /api/memory, /api/calls/* on port 8000.
-  //   * Physical device (the Xiaomi): dev machine LAN IP, phone on same Wi-Fi.
-  //     Set to this Mac's en0 IP (192.168.31.132). Re-check with
-  //     `ipconfig getifaddr en0` if your network changes.
+  //   * Physical device (the Xiaomi) over USB: use 127.0.0.1 + `adb reverse
+  //     tcp:8000 tcp:8000` (re-run after every USB reconnect/adb restart).
+  //     This is the current setting — the "Nilay" Wi-Fi the phone and this
+  //     Mac both connect to has AP/client isolation enabled (confirmed via
+  //     `adb shell ping <mac-ip>` -> "Destination Host Unreachable" both
+  //     directions), so the phone can't reach the Mac's LAN IP over Wi-Fi at
+  //     all — that's the "network error" the telecaller app was hitting.
+  //     If AP isolation ever gets disabled on that router, the LAN-IP form
+  //     (http://<mac-en0-ip>:8000, check with `ipconfig getifaddr en0`) works
+  //     without needing USB/adb reverse.
   //   * Android emulator instead: use http://10.0.2.2:8000 (host loopback).
   //   * Run the backend with:
   //       uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
   static const dev = ApiEnvironment(
     name: 'dev',
-    baseUrl: 'http://192.168.31.132:8000',
+    baseUrl: 'http://127.0.0.1:8000',
   );
   static const staging = ApiEnvironment(
     name: 'staging',

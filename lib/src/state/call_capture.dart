@@ -1,10 +1,14 @@
 import 'dart:async' show unawaited;
+import 'dart:io' show File;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/call_recording.dart';
 import '../services/call_recording_service.dart';
 import '../services/local_transcript_store.dart';
+import '../services/local_upload_ledger.dart';
+import '../services/local_upload_outbox.dart';
+import '../services/session_store.dart';
 import '../services/transcription_service.dart';
 import 'providers.dart';
 
@@ -99,7 +103,7 @@ final callRecordingServiceProvider = Provider<CallRecordingService>(
 );
 
 final transcriptionServiceProvider = Provider<TranscriptionService>(
-  (ref) => const TranscriptionService(),
+  (ref) => TranscriptionService(getToken: () => ref.read(sessionProvider).token),
 );
 
 /// Drives capturing the dialer's recording and turning it into a transcript,
@@ -202,8 +206,15 @@ class CallCaptureController extends Notifier<Map<String, CallCaptureState>> {
 
     _set(leadId, existing.copyWith(status: CaptureStatus.scanning));
 
+    // Pass the lead's phone so the scanner prefers the recording whose filename
+    // contains that number (OEM dialers embed it) instead of just the newest
+    // file — the single biggest cause of a call attaching to the wrong lead.
+    final leads = ref.read(leadsProvider);
+    final matches = leads.where((l) => l.id == leadId);
+    final phoneHint = matches.isEmpty ? null : matches.first.phone;
+
     try {
-      final recording = await service.findLatestRecording();
+      final recording = await service.findLatestRecording(phoneHint: phoneHint);
       if (recording == null) {
         _set(
           leadId,
@@ -244,10 +255,17 @@ class CallCaptureController extends Notifier<Map<String, CallCaptureState>> {
   static String _friendlyError(String raw) {
     if (raw.contains('reach') ||
         raw.contains('SocketException') ||
-        raw.contains('Connection refused') ||
-        raw.contains('timeout')) {
+        raw.contains('Connection refused')) {
       return 'Cannot reach the transcription server. '
           'Make sure the backend is running on the same Wi-Fi.';
+    }
+    // Matches TranscriptionService's two _pollUntilProcessed deadline
+    // messages ("Transcription timed out." / "...taking too long..."), which
+    // don't contain the literal substring "timeout" so they fell through to
+    // the raw `ApiException(network): ...` string below before this check.
+    if (raw.contains('timed out') || raw.contains('taking too long')) {
+      return 'Still processing on the server — this can take a few minutes '
+          'on a slow connection. Please try again shortly.';
     }
     return raw;
   }
@@ -269,12 +287,31 @@ class CallCaptureController extends Notifier<Map<String, CallCaptureState>> {
       ),
     );
 
+    // Look up the lead so the upload carries the real phone/name/source and
+    // attaches to this exact lead (contact_key). The auto-capture path used to
+    // send only leadId as `name`, so calls could re-slugify to a different lead
+    // and never carried a phone number for the backend's phone-based keying.
+    final leads = ref.read(leadsProvider);
+    final matches = leads.where((l) => l.id == leadId);
+    final lead = matches.isEmpty ? null : matches.first;
+
+    // If this exact recording was already uploaded, reuse its call_id instead of
+    // re-uploading the same bytes (survives restarts / folder re-scans).
+    final ledger = ref.read(localUploadLedgerProvider);
+    final existingCallId = await ledger.callIdFor(recording);
+
     try {
       final result = await ref
           .read(transcriptionServiceProvider)
           .transcribe(
             recording: recording,
             leadId: leadId,
+            name: lead?.name,
+            phone: lead?.phone,
+            source: lead?.source.name,
+            contactKey: leadId,
+            existingCallId: existingCallId,
+            onCallId: (id) => unawaited(ledger.remember(recording, id)),
             onProgress: (stage, percent) {
               _set(
                 leadId,
@@ -294,9 +331,23 @@ class CallCaptureController extends Notifier<Map<String, CallCaptureState>> {
       );
       // Persist to device storage so transcript survives app restarts.
       unawaited(ref.read(localTranscriptStoreProvider).save(leadId, result));
+      // Succeeded — clear any queued retry for this recording.
+      unawaited(ref.read(localUploadOutboxProvider).remove(recording.path));
       // Re-fetch lead detail so the call history panel reflects the new call.
       unawaited(ref.read(leadsProvider.notifier).enrich(leadId));
     } catch (e) {
+      // Queue the recording for automatic retry (survives app kill / offline),
+      // so a failed upload isn't lost the moment the user leaves this screen.
+      // The dedup ledger + backend content-hash guard make the retry idempotent.
+      unawaited(ref.read(localUploadOutboxProvider).enqueue(OutboxEntry(
+        leadId: leadId,
+        path: recording.path,
+        name: lead?.name,
+        phone: lead?.phone,
+        source: lead?.source.name,
+        contactKey: leadId,
+        callDateIso: recording.recordedAt.toIso8601String(),
+      )));
       _set(
         leadId,
         current.copyWith(
@@ -304,6 +355,42 @@ class CallCaptureController extends Notifier<Map<String, CallCaptureState>> {
           message: _friendlyError('$e'),
         ),
       );
+    }
+  }
+
+  /// Best-effort background retry of every recording queued by a previous failed
+  /// upload. Call on app resume. Each entry is retried once per drain; a success
+  /// removes it, a failure bumps its attempt count (and drops it after the
+  /// outbox's max attempts). Fail-soft: any error just leaves the entry queued.
+  Future<void> drainOutbox() async {
+    final outbox = ref.read(localUploadOutboxProvider);
+    final pending = await outbox.all();
+    for (final entry in pending) {
+      final file = File(entry.path);
+      if (!file.existsSync()) {
+        // The dialer deleted the recording — nothing to retry, stop tracking it.
+        await outbox.remove(entry.path);
+        continue;
+      }
+      final recording = CallRecording.fromFile(file);
+      final ledger = ref.read(localUploadLedgerProvider);
+      final existingCallId = await ledger.callIdFor(recording);
+      try {
+        await ref.read(transcriptionServiceProvider).transcribe(
+              recording: recording,
+              leadId: entry.leadId,
+              name: entry.name,
+              phone: entry.phone,
+              source: entry.source,
+              contactKey: entry.contactKey ?? entry.leadId,
+              existingCallId: existingCallId,
+              onCallId: (id) => unawaited(ledger.remember(recording, id)),
+            );
+        await outbox.remove(entry.path);
+        unawaited(ref.read(leadsProvider.notifier).enrich(entry.leadId));
+      } catch (e) {
+        await outbox.markFailure(entry.path, '$e');
+      }
     }
   }
 }

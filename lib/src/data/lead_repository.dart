@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
 import '../core/api/api_client.dart';
 import '../core/api/api_config.dart';
@@ -16,9 +17,17 @@ import '../models/lead.dart';
 /// from the call_id (the dataset has no phone field). In this app a [Lead.id]
 /// IS that contact_key, so detail / memory lookups round-trip cleanly.
 class LeadRepository {
-  const LeadRepository(this._client);
+  const LeadRepository(this._client, {String? Function()? getToken}) : _getToken = getToken;
 
   final ApiClient _client;
+
+  /// Returns the current session's JWT, or null when logged out. Needed here
+  /// (in addition to [_client]) because [uploadRecording] builds its own
+  /// `http.MultipartRequest` instead of going through [ApiClient] — without
+  /// this, the upload carries no Authorization header, so the backend can't
+  /// stamp org_id/telecaller_id on the created call and it never shows up in
+  /// this telecaller's `/api/inbox` (which is org-scoped).
+  final String? Function()? _getToken;
 
   // ── Inbox ──────────────────────────────────────────────────────────────
 
@@ -55,6 +64,19 @@ class LeadRepository {
     return _leadFromDetail(body);
   }
 
+  /// Same as [leadDetail] but also returns the authoritative server
+  /// `pipeline_stage`, so the caller can read back a stage moved on the web
+  /// dashboard / another device. Separate method so the plain [leadDetail]
+  /// callers stay untouched.
+  Future<({Lead lead, String? stage})> leadDetailWithStage(String contactKey) async {
+    final body = await _client.get(ApiEndpoints.leadDetail(contactKey));
+    if (body is! Map<String, dynamic>) {
+      throw ApiException('Unexpected lead-detail payload for $contactKey');
+    }
+    final stage = body['pipeline_stage'];
+    return (lead: _leadFromDetail(body), stage: stage is String ? stage : null);
+  }
+
   // ── Outbound lead creation + dedup ──────────────────────────────────────
 
   /// `GET /api/leads/dedupe?phone=` → true if this number is already a lead.
@@ -76,6 +98,30 @@ class LeadRepository {
     final body = await _client.post(ApiEndpoints.createLead, body: draft.toJson());
     final map = body is Map<String, dynamic> ? body : const <String, dynamic>{};
     return (map['contact_key'] ?? '').toString();
+  }
+
+  // ── Pipeline stage ──────────────────────────────────────────────────────
+
+  /// `PATCH /api/leads/by-contact/{contact_key}/stage` — moves a lead's kanban
+  /// stage, so a stage change made in this app becomes visible on the
+  /// founder's web Kanban board. `dealValue`/`listPrice`/`discountPct` are
+  /// only meaningful (and only sent) when [stage] is Closed Won.
+  Future<void> updateLeadStage(
+    String contactKey,
+    LeadStage stage, {
+    int? dealValue,
+    int? listPrice,
+    double? discountPct,
+  }) async {
+    await _client.patch(
+      ApiEndpoints.leadStage(contactKey),
+      body: {
+        'stage': stage.value,
+        if (dealValue != null) 'deal_value': dealValue,
+        if (listPrice != null) 'list_price': listPrice,
+        if (discountPct != null) 'discount_pct': discountPct,
+      },
+    );
   }
 
   // ── Telecaller score ────────────────────────────────────────────────────
@@ -128,7 +174,7 @@ class LeadRepository {
     final turns = (body is Map ? body['turns'] : null);
     return [
       if (turns is List)
-        for (final raw in turns.whereType<Map>()) _turnFromJson(raw),
+        for (final raw in turns.whereType<Map>()) _translatedTurnFromJson(raw),
     ];
   }
 
@@ -138,10 +184,27 @@ class LeadRepository {
     timestamp: raw['timestamp']?.toString(),
   );
 
+  /// Same as [_turnFromJson] but prefers the translated text — the
+  /// `/transcript/translate` response keeps `content` as the original-
+  /// language text and puts the English translation in `content_translated`.
+  static TranscriptTurn _translatedTurnFromJson(Map raw) => TranscriptTurn(
+    speaker: (raw['role'] ?? raw['speaker'] ?? '').toString(),
+    text: (raw['content_translated'] ?? raw['content'] ?? raw['text'] ?? '')
+        .toString(),
+    timestamp: raw['timestamp']?.toString(),
+  );
+
   /// `GET /api/calls/{id}/score` — the consolidated Score-tab payload (hero
   /// score, 4 rings, 5-dimension breakdown, sentiment timeline).
   Future<Map<String, dynamic>> callScore(String callId) async {
     final body = await _client.get(ApiEndpoints.callScore(callId));
+    return body is Map<String, dynamic> ? body : const {};
+  }
+
+  /// `POST /api/memory/{contact_key}/rebuild` — recompute this contact's
+  /// memory bubble from all of their calls. Returns the fresh bubble map.
+  Future<Map<String, dynamic>> rebuildMemory(String contactKey) async {
+    final body = await _client.post(ApiEndpoints.rebuildMemory(contactKey));
     return body is Map<String, dynamic> ? body : const {};
   }
 
@@ -190,12 +253,20 @@ class LeadRepository {
   }) async {
     final uri = ApiConfig.uri(ApiEndpoints.uploadRecording);
     final request = http.MultipartRequest('POST', uri)
-      ..files.add(await http.MultipartFile.fromPath('file', audio.path));
+      ..files.add(
+        await http.MultipartFile.fromPath(
+          'file',
+          audio.path,
+          contentType: _audioContentType(audio.path),
+        ),
+      );
     if (name != null) request.fields['name'] = name;
     if (phone != null) request.fields['phone'] = phone;
     if (source != null) request.fields['source'] = source;
     if (callDate != null) request.fields['call_date'] = callDate.toIso8601String();
     if (contactKey != null) request.fields['contact_key_override'] = contactKey;
+    final token = _getToken?.call();
+    if (token != null) request.headers['Authorization'] = 'Bearer $token';
 
     try {
       final streamed = await request.send().timeout(ApiConfig.timeout);
@@ -210,6 +281,33 @@ class LeadRepository {
       return (map is Map && map['call_id'] != null) ? map['call_id'].toString() : '';
     } on SocketException catch (e) {
       throw ApiException('Network error during upload', cause: e);
+    }
+  }
+
+  /// Explicit content-type by extension so the backend/storage layer doesn't
+  /// have to guess from bytes — extensions like `.opus` (WhatsApp voice
+  /// notes) otherwise fall back to `application/octet-stream`, which some
+  /// transcription pipelines reject.
+  static MediaType? _audioContentType(String path) {
+    final ext = path.split('.').last.toLowerCase();
+    switch (ext) {
+      case 'mp3':
+      case 'mpeg':
+        return MediaType('audio', 'mpeg');
+      case 'wav':
+        return MediaType('audio', 'wav');
+      case 'm4a':
+        return MediaType('audio', 'mp4');
+      case 'mp4':
+        return MediaType('video', 'mp4');
+      case 'ogg':
+        return MediaType('audio', 'ogg');
+      case 'opus':
+        return MediaType('audio', 'opus');
+      case 'aac':
+        return MediaType('audio', 'aac');
+      default:
+        return null; // let http fall back to its own sniffing
     }
   }
 

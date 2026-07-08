@@ -10,6 +10,7 @@ import '../services/local_call_store.dart';
 import '../state/providers.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import '../widgets/deal_closed_sheet.dart';
 import '../widgets/edit_lead_sheet.dart';
 import '../widgets/leadpilot_widgets.dart';
 import '../widgets/schedule_call_sheet.dart';
@@ -180,10 +181,26 @@ class _PipelineStrip extends ConsumerWidget {
 
   static const _stages = LeadStage.values;
 
+  Future<void> _selectStage(BuildContext context, WidgetRef ref, LeadStage stage) async {
+    final notifier = ref.read(leadStageProvider.notifier);
+    if (stage == LeadStage.closedWon) {
+      final deal = await showDealClosedSheet(context);
+      if (deal == null) return; // user dismissed without confirming
+      await notifier.setStage(
+        leadId,
+        stage,
+        dealValue: deal.dealValue,
+        listPrice: deal.listPrice,
+        discountPct: deal.discountPct,
+      );
+      return;
+    }
+    await notifier.setStage(leadId, stage);
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final stage = ref.watch(leadStageProvider.select((m) => m[leadId] ?? LeadStage.newLead));
-    final notifier = ref.read(leadStageProvider.notifier);
 
     return LpCard(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
@@ -192,25 +209,29 @@ class _PipelineStrip extends ConsumerWidget {
         children: [
           Text('PIPELINE STAGE', style: AppText.label11),
           const AppGap.sm(),
-          Row(
-            children: [
-              for (var i = 0; i < _stages.length; i++) ...[
-                Expanded(
-                  child: _StageChip(
-                    label: _stages[i].label,
-                    isActive: _stages[i] == stage,
-                    isDead: _stages[i] == LeadStage.dead,
-                    onTap: () => notifier.setStage(leadId, _stages[i]),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (var i = 0; i < _stages.length; i++) ...[
+                  SizedBox(
+                    width: 60,
+                    child: _StageChip(
+                      label: _stages[i].label,
+                      isActive: _stages[i] == stage,
+                      isDead: _stages[i].isTerminalNegative,
+                      onTap: () => _selectStage(context, ref, _stages[i]),
+                    ),
                   ),
-                ),
-                if (i < _stages.length - 1)
-                  Container(
-                    width: 10,
-                    height: 1.5,
-                    color: stage.index > i ? AppColors.blueRibbon : AppColors.westar,
-                  ),
+                  if (i < _stages.length - 1)
+                    Container(
+                      width: 10,
+                      height: 1.5,
+                      color: stage.index > i ? AppColors.blueRibbon : AppColors.westar,
+                    ),
+                ],
               ],
-            ],
+            ),
           ),
         ],
       ),

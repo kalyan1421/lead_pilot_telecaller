@@ -89,6 +89,9 @@ class _PostCallScreenState extends ConsumerState<PostCallScreen>
       _syncCallNotes();
       // Returning from the call screen — the recording should exist by now.
       ref.read(callCaptureProvider.notifier).captureLatest(widget.leadId);
+      // Retry any uploads that failed earlier (offline/network drop) — durable
+      // outbox drain, so a queued recording isn't lost.
+      unawaited(ref.read(callCaptureProvider.notifier).drainOutbox());
     }
   }
 
@@ -905,7 +908,7 @@ class _ScoreTab extends StatelessWidget {
             good: b.good,
           ),
         const AppGap.md(),
-        _ScoreSentimentCard(note: a.sentimentNote),
+        _ScoreSentimentCard(note: a.sentimentNote, segments: a.sentimentTimeline),
       ],
     );
   }
@@ -1115,12 +1118,29 @@ class _BreakdownRow extends StatelessWidget {
 }
 
 class _ScoreSentimentCard extends StatelessWidget {
-  const _ScoreSentimentCard({this.note});
+  const _ScoreSentimentCard({this.note, this.segments = const []});
 
   final String? note;
+  final List<SentimentSegment> segments;
+
+  /// Maps the backend's sentiment bucket to the timeline bar colour.
+  static Color _segmentColor(String label) {
+    switch (label) {
+      case 'frustrated':
+        return AppColors.alizarin;
+      case 'cautious':
+        return AppColors.tahitiGold;
+      case 'interested':
+        return AppColors.greenHaze;
+      case 'neutral':
+      default:
+        return AppColors.westar;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final hasSegments = segments.isNotEmpty;
     return LpCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1142,53 +1162,36 @@ class _ScoreSentimentCard extends StatelessWidget {
             ],
           ),
           const AppGap.sm(),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(AppRadius.xs),
-            child: Row(
-              children: const [
-                Expanded(
-                  flex: 2,
-                  child: ColoredBox(
-                    color: AppColors.westar,
-                    child: SizedBox(height: AppSpacing.lg),
-                  ),
-                ),
-                Expanded(
-                  flex: 2,
-                  child: ColoredBox(
-                    color: AppColors.tahitiGold,
-                    child: SizedBox(height: AppSpacing.lg),
-                  ),
-                ),
-                Expanded(
-                  flex: 2,
-                  child: ColoredBox(
-                    color: AppColors.westar,
-                    child: SizedBox(height: AppSpacing.lg),
-                  ),
-                ),
-                Expanded(
-                  flex: 3,
-                  child: ColoredBox(
-                    color: AppColors.greenHaze,
-                    child: SizedBox(height: AppSpacing.lg),
-                  ),
-                ),
-                Expanded(
-                  flex: 2,
-                  child: ColoredBox(
-                    color: AppColors.greenHaze,
-                    child: SizedBox(height: AppSpacing.lg),
-                  ),
-                ),
-              ],
+          if (hasSegments)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.xs),
+              child: Row(
+                // Real, equal-width slices coloured by each slice's sentiment
+                // (was a fixed set of hardcoded bars).
+                children: [
+                  for (final s in segments)
+                    Expanded(
+                      child: ColoredBox(
+                        color: _segmentColor(s.label),
+                        child: const SizedBox(height: AppSpacing.lg),
+                      ),
+                    ),
+                ],
+              ),
+            )
+          else
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.xs),
+              child: const ColoredBox(
+                color: AppColors.westar,
+                child: SizedBox(height: AppSpacing.lg, width: double.infinity),
+              ),
             ),
-          ),
           const AppGap.xs(),
           Text(
             (note != null && note!.trim().isNotEmpty)
                 ? note!.trim()
-                : 'Prospect warmed up after pitch at 3:54. No negative spike detected.',
+                : 'No sentiment signal detected for this call.',
             style: AppText.caption11.copyWith(color: AppColors.schooner),
           ),
         ],

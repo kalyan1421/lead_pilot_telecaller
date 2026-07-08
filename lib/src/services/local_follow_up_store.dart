@@ -30,6 +30,17 @@ class LocalFollowUpStore {
     await _persist([...all, task]);
   }
 
+  /// Replaces the task matching [task.id] in place — used to stamp the
+  /// backend id onto a task after it syncs, without disturbing its other
+  /// fields (status, dueLabel, etc. may have already changed locally).
+  Future<void> update(FollowUpTask task) async {
+    final all = await loadAll();
+    await _persist([
+      for (final t in all)
+        if (t.id == task.id) task else t,
+    ]);
+  }
+
   Future<void> markDone(String id) async {
     final all = await loadAll();
     await _persist([

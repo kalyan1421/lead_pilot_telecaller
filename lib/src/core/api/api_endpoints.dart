@@ -9,6 +9,7 @@
 ///   * `/api/leads/{contact_key}`            — full lead detail (card+memory+calls)
 ///   * `/api/leads`                          — create lead (Save Lead)
 ///   * `/api/leads/dedupe?phone=`            — duplicate check
+///   * `/api/leads/by-contact/{contact_key}/stage` — pipeline stage update
 ///   * `/api/memory/{contact_key}`           — memory bubble
 ///   * `/api/telecaller/score?window_days=`  — telecaller rolling score
 ///   * `/api/calls/upload`                   — outbound recording upload
@@ -18,6 +19,7 @@
 ///   * `/api/attendance/check-in`            — clock in for today
 ///   * `/api/attendance/check-out`           — clock out for today
 ///   * `/api/attendance/today`                — today's attendance record
+///   * `/api/auth/org`                        — org profile (name/logo/address/etc.)
 class ApiEndpoints {
   const ApiEndpoints._();
 
@@ -26,6 +28,11 @@ class ApiEndpoints {
   static String leadDetail(String contactKey) => '/api/leads/$contactKey';
   static const String createLead = '/api/leads';
   static const String dedupeLead = '/api/leads/dedupe';
+
+  // Pipeline stage update (mirrors the web Kanban's stage PATCH, but keyed by
+  // contact_key since that's the only lead identifier the app ever sees).
+  static String leadStage(String contactKey) =>
+      '/api/leads/by-contact/$contactKey/stage';
 
   // Memory bubble (per-contact cumulative memory)
   static String memory(String contactKey) => '/api/memory/$contactKey';
@@ -59,4 +66,13 @@ class ApiEndpoints {
   static const String attendanceCheckIn = '/api/attendance/check-in';
   static const String attendanceCheckOut = '/api/attendance/check-out';
   static const String attendanceToday = '/api/attendance/today';
+
+  // Follow-ups (previously local-only — SharedPreferences had no backend
+  // counterpart, so a scheduled/completed follow-up was invisible to the
+  // founder dashboard's missed-follow-up leakage metric).
+  static const String followUps = '/api/follow-ups';
+  static String followUp(String id) => '/api/follow-ups/$id';
+
+  // Organization profile (Profile screen's org card)
+  static const String orgProfile = '/api/auth/org';
 }

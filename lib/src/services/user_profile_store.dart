@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'session_store.dart';
+
 /// The telecaller's own profile, edited in-app and persisted locally.
 class UserProfile {
   const UserProfile({
@@ -96,7 +98,36 @@ class UserProfileController extends Notifier<UserProfile> {
   }
 
   Future<void> _load() async {
-    state = await ref.read(userProfileStoreProvider).load();
+    final stored = await ref.read(userProfileStoreProvider).load();
+    final session = ref.read(sessionProvider);
+    // Seed identity from the authenticated session when the user hasn't
+    // personalised their profile yet (still the "Telecaller" placeholder), so
+    // the card shows who they actually logged in as — not a default. Once the
+    // user edits their profile, their chosen values win.
+    final sessionName = session.name?.trim() ?? '';
+    final sessionRole = _prettyRole(session.role);
+    final sessionCompany = session.orgName?.trim() ?? '';
+    state = stored.copyWith(
+      name: (stored.name.isEmpty || stored.name == 'Telecaller') && sessionName.isNotEmpty
+          ? sessionName
+          : stored.name,
+      role: (stored.role.isEmpty || stored.role == 'Telecaller') && sessionRole.isNotEmpty
+          ? sessionRole
+          : stored.role,
+      company: stored.company.isEmpty && sessionCompany.isNotEmpty
+          ? sessionCompany
+          : stored.company,
+    );
+  }
+
+  /// "telecaller" -> "Telecaller", "ad_manager" -> "Ad Manager".
+  static String _prettyRole(String? role) {
+    if (role == null || role.isEmpty) return '';
+    return role
+        .split(RegExp(r'[_\s]+'))
+        .where((w) => w.isNotEmpty)
+        .map((w) => w[0].toUpperCase() + w.substring(1))
+        .join(' ');
   }
 
   Future<void> update(UserProfile profile) async {
