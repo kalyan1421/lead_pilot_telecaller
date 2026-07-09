@@ -198,6 +198,7 @@ flutter run
 | `ModuleNotFoundError: matplotlib` | `pip install matplotlib` |
 | `connection refused :5432` | PostgreSQL not running — `brew services start postgresql@14` |
 | `connection refused :8000` from phone | Start backend with `--host 0.0.0.0` not `127.0.0.1` |
+| "can't connect to server" / network error to `127.0.0.1:8000` | `adb reverse` tunnel dropped (happens on every ADB/USB reconnect). Run `adb reverse tcp:8000 tcp:8000`, or keep it alive with `./tool/keep-adb-reverse.sh` in a spare terminal. Check `adb reverse --list` first. |
 | Android CLEARTEXT error | Use a debug build; release blocks plain HTTP by default |
 | Inbox empty | Run `python import_audio.py` or `POST /api/leads` (step 1e) |
 | Upload/transcribe fails | `pip install openai-whisper` and ensure `ffmpeg` is on PATH |

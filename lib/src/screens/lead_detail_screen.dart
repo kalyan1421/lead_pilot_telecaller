@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_app_utilities/flutter_app_utilities.dart';
 
+import '../core/api/api_exception.dart';
 import '../models/lead.dart';
 import '../services/call_actions.dart';
 import '../services/local_call_store.dart';
@@ -299,20 +300,79 @@ class _StageChip extends StatelessWidget {
   }
 }
 
-class MemoryPanel extends StatelessWidget {
+class MemoryPanel extends ConsumerStatefulWidget {
   const MemoryPanel({super.key, required this.lead, this.compact = false});
 
   final Lead lead;
   final bool compact;
 
   @override
+  ConsumerState<MemoryPanel> createState() => _MemoryPanelState();
+}
+
+class _MemoryPanelState extends ConsumerState<MemoryPanel> {
+  bool _rebuilding = false;
+
+  /// Recompute the bubble from all of this contact's calls, then re-enrich so
+  /// the refreshed facts/verdict show without leaving the screen.
+  Future<void> _rebuild() async {
+    if (_rebuilding) return;
+    setState(() => _rebuilding = true);
+    try {
+      await ref.read(leadsProvider.notifier).rebuildMemory(widget.lead.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Memory rebuilt')),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      // 404 = this contact has no analysed calls yet, so retrying won't help;
+      // say so plainly instead of a generic error.
+      final msg = e.isNotFound
+          ? 'No analysed calls yet — nothing to rebuild.'
+          : 'Couldn’t rebuild memory. Try again.';
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(msg)));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Couldn’t rebuild memory. Try again.')),
+      );
+    } finally {
+      if (mounted) setState(() => _rebuilding = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final lead = widget.lead;
+    final compact = widget.compact;
     return SectionPanel(
       title: 'Memory Bubble',
       icon: Icons.graphic_eq,
       titleColor: AppColors.electricViolet,
       color: AppColors.violetSurface,
       borderColor: AppColors.violetBorder,
+      // Rebuild is a full-detail action only — the compact (pre-call) view is
+      // read-only glanceable context.
+      trailing: compact
+          ? null
+          : (_rebuilding
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.electricViolet,
+                  ),
+                )
+              : IconButton(
+                  onPressed: _rebuild,
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'Rebuild memory from all calls',
+                  icon: const Icon(Icons.refresh,
+                      size: 18, color: AppColors.electricViolet),
+                )),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

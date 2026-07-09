@@ -180,11 +180,10 @@ class _CallDetailScreenState extends ConsumerState<CallDetailScreen> {
             final data = snapshot.data!;
             final overall = _toInt(data.score['rings']?['overall']?['value']) ??
                 _toInt(data.analysis['agent_debrief']?['total_score']);
-            // Junk / not-relevant calls have no meaningful score — the analyzer
-            // zeroes every dimension (see lead_analyzer's not-relevant branch),
-            // so a hero "0" ring reads as a bug. Hide it and let the Score tab
-            // render the "Not a qualifying lead" empty-state instead.
-            final notQualifying = _isNotQualifying(data.score);
+            // Every analysed call is now scored on its own merits — even
+            // off-topic / wrong-number calls (the analyzer no longer zeroes
+            // them; a genuine wrong number simply scores low). So always show
+            // the hero ring; there's no "not a qualifying lead" hiding anymore.
             final duration = _approxDuration(data.transcript.turns);
             final activeTurns = _showEnglish && _translated != null
                 ? _translated!
@@ -197,7 +196,7 @@ class _CallDetailScreenState extends ConsumerState<CallDetailScreen> {
                   leadName: widget.args?.leadName ?? '',
                   calledAt: widget.args?.calledAt,
                   duration: duration,
-                  heroScore: notQualifying ? null : overall,
+                  heroScore: overall,
                   tab: _tab,
                   onTabChanged: (i) => setState(() => _tab = i),
                 ),
@@ -238,17 +237,6 @@ class _CallDetailScreenState extends ConsumerState<CallDetailScreen> {
   }
 
   static int? _toInt(Object? v) => v is num ? v.round() : null;
-
-  /// A call the analyzer judged off-topic / wrong-number / spam. The backend
-  /// marks these `analysis_status == 'not_relevant'` with verdict `Junk` and
-  /// zeroes every dimension, so the Score tab shows an empty-state instead of
-  /// a grid of misleading 0-rings.
-  static bool _isNotQualifying(Map<String, dynamic> score) {
-    if (score.isEmpty) return false;
-    final status = (score['analysis_status'] ?? '').toString();
-    final verdict = (score['verdict'] ?? '').toString().toLowerCase();
-    return status == 'not_relevant' || verdict == 'junk';
-  }
 
   /// Approximates call length from the last transcript turn's `MM:SS`
   /// timestamp. The backend doesn't store a real duration field yet.
@@ -814,21 +802,39 @@ class _ScoreTab extends StatelessWidget {
         ? rings['sentiment_timeline'] as Map<String, dynamic>
         : const <String, dynamic>{};
 
-    // Off-topic / wrong-number / spam call: the analyzer zeroed every
-    // dimension, so a grid of 0-rings + all-zero breakdown reads as broken.
-    // Show why it wasn't scored instead.
-    final status = (rings['analysis_status'] ?? '').toString();
-    final verdict = (rings['verdict'] ?? '').toString();
-    if (status == 'not_relevant' || verdict.toLowerCase() == 'junk') {
-      return _NotQualifyingLead(
-        reason: (rings['relevance_reason'] ?? '').toString(),
-        timeline: timeline,
-      );
-    }
+    // Every analysed call is scored on its own merits now (off-topic /
+    // wrong-number calls included — the analyzer no longer blanks them), so
+    // the rings + breakdown always render. A genuine wrong number simply shows
+    // low lead-quality rather than a "not a qualifying lead" empty-state.
+    // `relevance_reason` (if any) is surfaced as a note below the rings.
+    final relevanceReason = (rings['relevance_reason'] ?? '').toString();
 
     return ListView(
       padding: const EdgeInsets.all(AppSpacing.md),
       children: [
+        if (relevanceReason.trim().isNotEmpty) ...[
+          Container(
+            padding: const EdgeInsets.all(AppSpacing.sm),
+            decoration: BoxDecoration(
+              color: AppColors.pampas,
+              borderRadius: BorderRadius.circular(AppRadius.xs),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.info_outline,
+                    size: 14, color: AppColors.schooner),
+                const AppGap.xs(axis: Axis.horizontal),
+                Expanded(
+                  child: Text('Relevance note: $relevanceReason',
+                      style: AppText.caption11
+                          .copyWith(color: AppColors.schooner)),
+                ),
+              ],
+            ),
+          ),
+          const AppGap.md(),
+        ],
         GridView.count(
           crossAxisCount: 2,
           shrinkWrap: true,
@@ -875,78 +881,6 @@ class _ScoreTab extends StatelessWidget {
 
   static int _val(Object? ring) => ring is Map ? (_num(ring['value'])) : 0;
   static int _num(Object? v) => v is num ? v.round() : 0;
-}
-
-/// Empty-state for a call the analyzer judged off-topic / wrong-number / spam.
-/// Replaces the rings + breakdown (which would all be zero) with a clear
-/// explanation. Sentiment is still real, so its timeline is kept if present.
-class _NotQualifyingLead extends StatelessWidget {
-  const _NotQualifyingLead({required this.reason, required this.timeline});
-
-  final String reason;
-  final Map<String, dynamic> timeline;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasTimeline =
-        timeline['segments'] is List && (timeline['segments'] as List).isNotEmpty;
-
-    return ListView(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      children: [
-        LpCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Icon(Icons.filter_alt_off_outlined,
-                  size: 40, color: AppColors.schooner),
-              const AppGap.sm(),
-              Center(
-                child: Text('Not a qualifying lead',
-                    style: AppText.display16, textAlign: TextAlign.center),
-              ),
-              const AppGap.xs(),
-              Center(
-                child: Text(
-                  'This call was flagged off-topic, a wrong number, or spam, '
-                  'so it isn’t scored on the sales dimensions.',
-                  style: AppText.body14.copyWith(color: AppColors.schooner),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-              if (reason.trim().isNotEmpty) ...[
-                const AppGap.md(),
-                Container(
-                  padding: const EdgeInsets.all(AppSpacing.sm),
-                  decoration: BoxDecoration(
-                    color: AppColors.pampas,
-                    borderRadius: BorderRadius.circular(AppRadius.xs),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Icon(Icons.info_outline,
-                          size: 14, color: AppColors.schooner),
-                      const AppGap.xs(axis: Axis.horizontal),
-                      Expanded(
-                        child: Text(reason,
-                            style: AppText.caption11
-                                .copyWith(color: AppColors.schooner)),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-        if (hasTimeline) ...[
-          const AppGap.md(),
-          _SentimentTimelineCard(timeline: timeline),
-        ],
-      ],
-    );
-  }
 }
 
 class _RingTile extends StatelessWidget {
