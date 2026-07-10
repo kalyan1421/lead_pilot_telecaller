@@ -208,6 +208,14 @@ class LeadRepository {
     return body is Map<String, dynamic> ? body : const {};
   }
 
+  /// `POST /api/leads/{contact_key}/pre-call-brief/rebuild` — force a fresh
+  /// AI Script/Checklist for this contact instead of waiting for the next
+  /// call to invalidate the cached one.
+  Future<Map<String, dynamic>> rebuildPreCallBrief(String contactKey) async {
+    final body = await _client.post(ApiEndpoints.rebuildPreCallBrief(contactKey));
+    return body is Map<String, dynamic> ? body : const {};
+  }
+
   /// `GET /api/calls/{id}/processing-status` (Upload→Transcribe→Analyse→Done).
   Future<ProcessingStatus> processingStatus(String callId) async {
     final body = await _client.get(ApiEndpoints.processingStatus(callId));
@@ -343,7 +351,8 @@ class LeadRepository {
   }
 
   /// `GET /api/leads/{contact_key}` → fully-enriched [Lead].
-  /// Response = inbox card fields + `phone, reason, status, memory{…}, calls[]`.
+  /// Response = inbox card fields + `phone, reason, status, memory{…}, calls[],
+  /// pre_call_brief{…}`.
   Lead _leadFromDetail(Map<String, dynamic> j) {
     final memory = j['memory'] is Map<String, dynamic>
         ? j['memory'] as Map<String, dynamic>
@@ -352,6 +361,9 @@ class LeadRepository {
     final openObjections = memory['open_objections'];
     final calls = j['calls'];
     final score = _toInt(j['lead_score']);
+    final brief = j['pre_call_brief'] is Map<String, dynamic>
+        ? j['pre_call_brief'] as Map<String, dynamic>
+        : null;
 
     final factInsights = <MemoryInsight>[
       if (facts is List)
@@ -363,11 +375,24 @@ class LeadRepository {
           ),
     ];
 
-    final objections = <Objection>[
-      if (openObjections is List)
-        for (final o in openObjections)
-          if (o != null) Objection(question: o.toString(), response: ''),
-    ];
+    // Prefer the AI-generated objection playbook (question + suggested
+    // response, grounded in the org's USPs/pricing/competitors); fall back to
+    // the memory bubble's bare open-objection strings if no brief is cached yet.
+    final briefObjections = brief?['objections'];
+    final objections = briefObjections is List && briefObjections.isNotEmpty
+        ? <Objection>[
+            for (final o in briefObjections.whereType<Map<String, dynamic>>())
+              if ((o['question'] ?? '').toString().isNotEmpty)
+                Objection(
+                  question: o['question'].toString(),
+                  response: (o['response'] ?? '').toString(),
+                ),
+          ]
+        : <Objection>[
+            if (openObjections is List)
+              for (final o in openObjections)
+                if (o != null) Objection(question: o.toString(), response: ''),
+          ];
 
     final contactKey = (j['contact_key'] ?? '').toString();
 
@@ -389,6 +414,10 @@ class LeadRepository {
     final strategy = (memory['next_call_strategy'] ?? '').toString();
     final headline = (memory['headline'] ?? '').toString();
 
+    final briefKeyPoints = brief?['key_points'];
+    final briefSteps = brief?['steps'];
+    final briefChecklist = brief?['checklist'];
+
     return Lead(
       id: contactKey,
       name: (j['name'] ?? '').toString(),
@@ -402,18 +431,48 @@ class LeadRepository {
       averageScore: score,
       memory: factInsights,
       script: AiScript(
-        generatedAgo: '',
-        openingLine: strategy,
-        keyPoints: [
-          for (final f in factInsights.take(4)) f.text,
+        generatedAgo: _agoLabel(_parseTs(j['pre_call_brief_generated_at'])),
+        openingLine: (brief?['opening_line'] as String?)?.isNotEmpty == true
+            ? brief!['opening_line'] as String
+            : strategy,
+        keyPoints: briefKeyPoints is List && briefKeyPoints.isNotEmpty
+            ? briefKeyPoints.map((e) => e.toString()).toList()
+            : [for (final f in factInsights.take(4)) f.text],
+        steps: <ScriptStep>[
+          if (briefSteps is List)
+            for (final s in briefSteps.whereType<Map<String, dynamic>>())
+              ScriptStep(
+                title: (s['title'] ?? '').toString(),
+                subtitle: (s['subtitle'] ?? '').toString(),
+              ),
         ],
-        steps: const [],
       ),
       objections: objections,
-      checklist: const [],
+      checklist: <ChecklistItem>[
+        if (briefChecklist is List)
+          for (var i = 0; i < briefChecklist.length; i++)
+            ChecklistItem(
+              id: 'ai_$i',
+              text: briefChecklist[i].toString(),
+              completed: false,
+            ),
+      ],
       history: history,
       propertyInterest: headline.isEmpty ? null : headline,
     );
+  }
+
+  /// Relative-time label for the pre-call brief's generation timestamp, e.g.
+  /// "12m ago". Empty string (renders nothing) when the brief hasn't been
+  /// generated yet or the timestamp is missing.
+  static String _agoLabel(DateTime? ts) {
+    if (ts == null) return '';
+    final diff = DateTime.now().difference(ts);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays == 1) return '1 day ago';
+    return '${diff.inDays} days ago';
   }
 
   static String _callTitle(Map<String, dynamic> c) {

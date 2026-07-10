@@ -39,6 +39,12 @@ class ApiEndpoints {
   static String rebuildMemory(String contactKey) =>
       '/api/memory/$contactKey/rebuild';
 
+  // Pre-Call brief (opening line/key points/script steps/objection
+  // responses/checklist) — normally cached and returned inline by
+  // [leadDetail]; this forces a fresh regeneration.
+  static String rebuildPreCallBrief(String contactKey) =>
+      '/api/leads/$contactKey/pre-call-brief/rebuild';
+
   // Telecaller score + trend
   static const String telecallerScore = '/api/telecaller/score';
 

@@ -59,7 +59,8 @@ class HttpApiClient implements ApiClient {
 
     try {
       final streamed = await _client.send(request).timeout(ApiConfig.timeout);
-      final response = await http.Response.fromStream(streamed);
+      final response =
+          await http.Response.fromStream(streamed).timeout(ApiConfig.timeout);
       return _decode(response, method, path);
     } on TimeoutException catch (e) {
       throw ApiException('Request timed out: $method $path', cause: e);

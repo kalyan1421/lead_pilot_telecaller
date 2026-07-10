@@ -10,6 +10,7 @@ import '../theme/app_spacing.dart';
 import '../theme/app_theme.dart';
 import '../widgets/leadpilot_widgets.dart';
 import '../widgets/schedule_call_sheet.dart';
+import '../widgets/shimmer.dart';
 
 class FollowUpsScreen extends ConsumerStatefulWidget {
   const FollowUpsScreen({super.key});
@@ -102,6 +103,7 @@ class _FollowUpsScreenState extends ConsumerState<FollowUpsScreen>
   @override
   Widget build(BuildContext context) {
     final tasks = ref.watch(followUpsProvider);
+    final loading = ref.watch(followUpsLoadingProvider) && tasks.isEmpty;
 
     final overdue = tasks.where((t) => t.status == FollowUpStatus.overdue).toList();
     final pending = tasks.where((t) => t.status == FollowUpStatus.pending).toList();
@@ -202,9 +204,10 @@ class _FollowUpsScreenState extends ConsumerState<FollowUpsScreen>
               child: TabBarView(
                 controller: _tabs,
                 children: [
-                  _TaskList(tasks: tasks),
+                  _TaskList(tasks: tasks, loading: loading),
                   _TaskList(
                     tasks: tasks.where((t) => t.dueToday).toList(),
+                    loading: loading,
                     emptyTitle: 'Nothing due today',
                     emptySubtitle: 'Check Upcoming for future tasks',
                   ),
@@ -215,6 +218,7 @@ class _FollowUpsScreenState extends ConsumerState<FollowUpsScreen>
                               t.status == FollowUpStatus.pending && !t.dueToday,
                         )
                         .toList(),
+                    loading: loading,
                     emptyTitle: 'No upcoming tasks',
                     emptySubtitle: 'You\'re on top of everything',
                   ),
@@ -233,16 +237,29 @@ class _FollowUpsScreenState extends ConsumerState<FollowUpsScreen>
 class _TaskList extends StatelessWidget {
   const _TaskList({
     required this.tasks,
+    this.loading = false,
     this.emptyTitle = 'All caught up!',
     this.emptySubtitle = 'No tasks here',
   });
 
   final List<FollowUpTask> tasks;
+  final bool loading;
   final String emptyTitle;
   final String emptySubtitle;
 
   @override
   Widget build(BuildContext context) {
+    if (loading) {
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+        children: const [
+          _TaskTileSkeleton(),
+          _TaskTileSkeleton(),
+          _TaskTileSkeleton(),
+          _TaskTileSkeleton(),
+        ],
+      );
+    }
     if (tasks.isEmpty) {
       return Center(
         child: Column(
@@ -295,6 +312,41 @@ class _SectionLabel extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(top: 4, bottom: 6),
       child: Text(label, style: AppText.label11.copyWith(color: color)),
+    );
+  }
+}
+
+class _TaskTileSkeleton extends StatelessWidget {
+  const _TaskTileSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: AppColors.westar),
+      ),
+      child: Row(
+        children: [
+          const ShimmerBox(width: 22, height: 22, borderRadius: 11),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                ShimmerBox(width: double.infinity, height: 14),
+                SizedBox(height: 6),
+                ShimmerBox(width: 110, height: 12),
+                SizedBox(height: 6),
+                ShimmerBox(width: 80, height: 11),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

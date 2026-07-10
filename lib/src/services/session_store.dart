@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// The logged-in telecaller's identity + JWT. Models server identity (who is
 /// this, what org, what role) — deliberately separate from
@@ -62,9 +63,18 @@ class SessionController extends Notifier<Session> {
     state = _sessionFrom(token, user);
   }
 
+  /// Clears the JWT/user secret from secure storage *and* every locally
+  /// persisted account-scoped cache (profile, leads, follow-ups, calls,
+  /// pipeline stages, …) — none of those SharedPreferences keys are
+  /// namespaced by user id, so a stale value would otherwise leak into the
+  /// next account that logs in on this device. Call sites must also
+  /// `ref.invalidate` the corresponding Riverpod providers so their
+  /// in-memory state (already read from the now-cleared prefs) drops too.
   Future<void> logout() async {
     await _storage.delete(key: _tokenKey);
     await _storage.delete(key: _userKey);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
     state = Session.empty;
   }
 

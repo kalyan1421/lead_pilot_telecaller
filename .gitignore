@@ -4,6 +4,9 @@
 *.pyc
 *.swp
 .DS_Store
+
+# Firebase service-account credentials — never commit, these are secrets.
+*firebase-adminsdk*.json
 .atom/
 .build/
 .buildlog/

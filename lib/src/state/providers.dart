@@ -90,6 +90,18 @@ class LeadsUsingFallbackController extends Notifier<bool> {
   void set(bool value) => state = value;
 }
 
+/// True while [LeadsController] is running its initial/refresh fetch —
+/// screens watch this to show a shimmer skeleton instead of an empty list.
+final leadsLoadingProvider =
+    NotifierProvider<LeadsLoadingController, bool>(LeadsLoadingController.new);
+
+class LeadsLoadingController extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void set(bool value) => state = value;
+}
+
 class LeadsController extends Notifier<List<Lead>> {
   /// Locally-saved manual edits, applied on top of whatever the backend/mock
   /// returns so edits persist across restarts and show everywhere.
@@ -102,7 +114,10 @@ class LeadsController extends Notifier<List<Lead>> {
       return mockLeads;
     }
     // Kick off the async load; start empty so no stale mock data flashes.
-    _load();
+    // Deferred to a microtask: `_load` mutates `leadsLoadingProvider`
+    // synchronously as its first step, and Riverpod forbids a provider from
+    // modifying another provider while it's still inside its own `build()`.
+    Future.microtask(_load);
     return const [];
   }
 
@@ -115,6 +130,7 @@ class LeadsController extends Notifier<List<Lead>> {
       _overrides[lead.id]?.applyTo(lead) ?? lead;
 
   Future<void> _load() async {
+    ref.read(leadsLoadingProvider.notifier).set(true);
     _overrides = await ref.read(localLeadOverrideStoreProvider).loadAll();
     try {
       final fetched = await ref.read(leadRepositoryProvider).fetchInbox();
@@ -129,6 +145,8 @@ class LeadsController extends Notifier<List<Lead>> {
         state = [for (final l in mockLeads) _withOverride(l)];
         ref.read(leadsUsingFallbackProvider.notifier).set(true);
       }
+    } finally {
+      ref.read(leadsLoadingProvider.notifier).set(false);
     }
   }
 
@@ -183,33 +201,54 @@ final followUpsProvider =
   FollowUpController.new,
 );
 
+/// True while [FollowUpController] is running its initial/refresh load —
+/// screens watch this to show a shimmer skeleton instead of an empty list.
+final followUpsLoadingProvider = NotifierProvider<FollowUpsLoadingController, bool>(
+  FollowUpsLoadingController.new,
+);
+
+class FollowUpsLoadingController extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void set(bool value) => state = value;
+}
+
 class FollowUpController extends Notifier<List<FollowUpTask>> {
   @override
   List<FollowUpTask> build() {
-    _load();
+    // Deferred to a microtask: `_load` mutates `followUpsLoadingProvider`
+    // synchronously as its first step, and Riverpod forbids a provider from
+    // modifying another provider while it's still inside its own `build()`.
+    Future.microtask(_load);
     return const [];
   }
 
   Future<void> _load() async {
-    final local = await ref.read(localFollowUpStoreProvider).loadAll();
-    state = local;
-    // Additive read-back: pull the backend's follow-ups and surface any this
-    // device doesn't already have locally (created on the web dashboard or
-    // another device). Purely additive + keyed on backendId, so it can never
-    // duplicate or clobber a local task; fail-soft on any error.
+    ref.read(followUpsLoadingProvider.notifier).set(true);
     try {
-      final remote = await ref.read(followUpRepositoryProvider).list();
-      final knownBackendIds = {
-        for (final t in local)
-          if (t.backendId != null) t.backendId,
-      };
-      final extras = [
-        for (final r in remote)
-          if (r.backendId != null && !knownBackendIds.contains(r.backendId)) r,
-      ];
-      if (extras.isNotEmpty) state = [...local, ...extras];
-    } catch (_) {
-      // Offline / backend down — local remains the source of truth.
+      final local = await ref.read(localFollowUpStoreProvider).loadAll();
+      state = local;
+      // Additive read-back: pull the backend's follow-ups and surface any this
+      // device doesn't already have locally (created on the web dashboard or
+      // another device). Purely additive + keyed on backendId, so it can never
+      // duplicate or clobber a local task; fail-soft on any error.
+      try {
+        final remote = await ref.read(followUpRepositoryProvider).list();
+        final knownBackendIds = {
+          for (final t in local)
+            if (t.backendId != null) t.backendId,
+        };
+        final extras = [
+          for (final r in remote)
+            if (r.backendId != null && !knownBackendIds.contains(r.backendId)) r,
+        ];
+        if (extras.isNotEmpty) state = [...local, ...extras];
+      } catch (_) {
+        // Offline / backend down — local remains the source of truth.
+      }
+    } finally {
+      ref.read(followUpsLoadingProvider.notifier).set(false);
     }
   }
 

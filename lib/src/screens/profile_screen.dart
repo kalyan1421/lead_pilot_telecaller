@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../models/attendance_record.dart';
 import '../models/lead.dart';
+import '../services/local_call_store.dart';
 import '../services/session_store.dart';
 import '../services/user_profile_store.dart';
 import '../state/providers.dart';
@@ -198,6 +199,23 @@ class ProfileScreen extends ConsumerWidget {
                         labelColor: AppColors.alizarin,
                         onTap: () async {
                           await ref.read(sessionProvider.notifier).logout();
+                          // logout() already wiped SharedPreferences, but these
+                          // providers hold that data in memory too — without
+                          // invalidating them, the next account to log in on
+                          // this device would still see the previous account's
+                          // name/leads/follow-ups/etc. until an app relaunch.
+                          ref.invalidate(userProfileProvider);
+                          ref.invalidate(orgProfileProvider);
+                          ref.invalidate(leadsProvider);
+                          ref.invalidate(leadsUsingFallbackProvider);
+                          ref.invalidate(followUpsProvider);
+                          ref.invalidate(localCallsProvider);
+                          ref.invalidate(leadStageProvider);
+                          ref.invalidate(checklistExtrasProvider);
+                          ref.invalidate(callNotesProvider);
+                          ref.invalidate(selectedLeadIdProvider);
+                          ref.invalidate(telecallerScoreProvider);
+                          ref.invalidate(attendanceProvider);
                           if (context.mounted) context.go('/login');
                         },
                       ),

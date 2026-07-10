@@ -9,6 +9,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_theme.dart';
 import '../widgets/leadpilot_widgets.dart';
+import '../widgets/shimmer.dart';
 
 class CallsScreen extends ConsumerStatefulWidget {
   const CallsScreen({super.key});
@@ -31,6 +32,7 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
   @override
   Widget build(BuildContext context) {
     final allCalls = ref.watch(callLogProvider);
+    final loading = ref.watch(leadsLoadingProvider) && allCalls.isEmpty;
     final q = _query.trim().toLowerCase();
     final callLog = q.isEmpty
         ? allCalls
@@ -181,7 +183,9 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
                 children: [
-                  if (callLog.isEmpty)
+                  if (loading) ...[
+                    for (var i = 0; i < 5; i++) const _CallTileSkeleton(),
+                  ] else if (callLog.isEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 60),
                       child: Column(
@@ -237,6 +241,43 @@ class _SectionLabel extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(top: 4, bottom: 6),
       child: Text(label, style: AppText.label11),
+    );
+  }
+}
+
+class _CallTileSkeleton extends StatelessWidget {
+  const _CallTileSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: AppColors.westar),
+      ),
+      child: Row(
+        children: [
+          const ShimmerBox(width: 36, height: 36, borderRadius: 8),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                ShimmerBox(width: double.infinity, height: 14),
+                SizedBox(height: 6),
+                ShimmerBox(width: 100, height: 11),
+                SizedBox(height: 8),
+                ShimmerBox(width: 120, height: 16, borderRadius: 8),
+              ],
+            ),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          const ShimmerBox(width: 38, height: 38, borderRadius: 19),
+        ],
+      ),
     );
   }
 }

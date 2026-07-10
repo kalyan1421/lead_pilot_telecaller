@@ -13,6 +13,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_theme.dart';
 import '../widgets/leadpilot_widgets.dart';
+import '../widgets/shimmer.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -63,6 +64,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final leads = ref.watch(leadsProvider);
     final filtered = _applySearch(_applyFilter(leads));
     final usingFallback = ref.watch(leadsUsingFallbackProvider);
+    final loading = ref.watch(leadsLoadingProvider) && leads.isEmpty;
 
     return Scaffold(
       backgroundColor: AppColors.springWood,
@@ -74,7 +76,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               LpFallbackBanner(
                 onRetry: () => ref.read(leadsProvider.notifier).refresh(),
               ),
-            Expanded(child: _buildScrollBody(context, filtered)),
+            Expanded(child: _buildScrollBody(context, filtered, loading)),
           ],
         ),
       ),
@@ -155,7 +157,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   // ── Scrollable body ────────────────────────────────────────────────────────
 
-  Widget _buildScrollBody(BuildContext context, List<Lead> leads) {
+  Widget _buildScrollBody(BuildContext context, List<Lead> leads, bool loading) {
     return CustomScrollView(
       slivers: [
         // Stats row — computed from real data.
@@ -215,8 +217,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             child: _buildFilterChips(),
           ),
         ),
-        // Lead list or empty state
-        if (leads.isEmpty)
+        // Lead list, loading skeleton, or empty state
+        if (loading)
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 100),
+            sliver: SliverList.separated(
+              itemCount: 5,
+              separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.sm),
+              itemBuilder: (_, _) => const _LeadTileSkeleton(),
+            ),
+          )
+        else if (leads.isEmpty)
           SliverFillRemaining(
             child: Center(
               child: Column(
@@ -549,6 +560,45 @@ class _StatTile extends StatelessWidget {
               ],
             ],
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Lead tile skeleton ─────────────────────────────────────────────────────
+
+class _LeadTileSkeleton extends StatelessWidget {
+  const _LeadTileSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: AppColors.westar),
+      ),
+      padding: const EdgeInsets.all(AppSpacing.md),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const ShimmerBox(width: 52, height: 52, borderRadius: 26),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                ShimmerBox(width: 140, height: 15),
+                SizedBox(height: 8),
+                ShimmerBox(width: 100, height: 12),
+                SizedBox(height: 10),
+                ShimmerBox(width: 90, height: 18, borderRadius: 9),
+              ],
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          const ShimmerBox(width: 40, height: 40, borderRadius: 20),
         ],
       ),
     );
