@@ -1,7 +1,8 @@
-import 'dart:async' show unawaited;
+import 'dart:async' show Timer, unawaited;
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/api/api_client.dart';
@@ -24,10 +25,82 @@ import '../services/session_store.dart';
 
 /// The HTTP transport. Swap the implementation here (or override in tests)
 /// without touching call sites. Reads the session's JWT fresh on every
-/// request so login/logout take effect immediately.
+/// request so login/logout take effect immediately. Every request's outcome
+/// also feeds [serverReachableProvider] so the app-wide "can't reach server"
+/// banner (see `app.dart`) reflects real connectivity, not just the leads
+/// screen's own fallback-to-mock-data path.
 final apiClientProvider = Provider<ApiClient>(
-  (ref) => HttpApiClient(getToken: () => ref.read(sessionProvider).token),
+  (ref) => HttpApiClient(
+    getToken: () => ref.read(sessionProvider).token,
+    onConnectivityOk: () => ref.read(serverReachableProvider.notifier).markReachable(),
+    onConnectivityIssue: () => ref.read(serverReachableProvider.notifier).markUnreachable(),
+  ),
 );
+
+/// Whether the backend was reachable as of the most recent request — true
+/// (optimistic) until proven otherwise. Drives the global "no server
+/// connection" banner shown over every screen (see `app.dart`).
+final serverReachableProvider =
+    NotifierProvider<ServerReachabilityController, bool>(
+      ServerReachabilityController.new,
+    );
+
+class ServerReachabilityController extends Notifier<bool> {
+  Timer? _retryTimer;
+
+  @override
+  bool build() {
+    ref.onDispose(() {
+      _retryTimer?.cancel();
+    });
+    return true;
+  }
+
+  /// Called by [HttpApiClient] whenever a request gets any response below
+  /// 500 — proof the server is up, whatever the request's own outcome.
+  void markReachable() {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    if (!state) state = true;
+  }
+
+  /// Called by [HttpApiClient] on a network-layer failure (timeout, socket
+  /// error, DNS/transport error) or a 5xx response. Schedules a background
+  /// `/health` retry loop so the banner clears itself without the user
+  /// having to do anything, once the server/network recovers.
+  void markUnreachable() {
+    if (state) state = false;
+    _scheduleRetry();
+  }
+
+  /// Forces an immediate reachability check — wired to the banner's Retry
+  /// button so tapping it doesn't just wait for the next background tick.
+  Future<void> retryNow() => _attemptRetry();
+
+  void _scheduleRetry() {
+    _retryTimer?.cancel();
+    _retryTimer = Timer(const Duration(seconds: 6), _attemptRetry);
+  }
+
+  Future<void> _attemptRetry() async {
+    if (await _pingHealth()) {
+      markReachable();
+    } else if (!state) {
+      _scheduleRetry();
+    }
+  }
+
+  static Future<bool> _pingHealth() async {
+    try {
+      final response = await http
+          .get(Uri.parse('${ApiConfig.baseUrl}/health'))
+          .timeout(const Duration(seconds: 6));
+      return response.statusCode < 500;
+    } catch (_) {
+      return false;
+    }
+  }
+}
 
 /// Maps the FastAPI "AI layer" responses into the app's domain models.
 final leadRepositoryProvider = Provider<LeadRepository>(

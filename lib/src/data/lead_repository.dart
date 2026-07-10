@@ -178,6 +178,22 @@ class LeadRepository {
     ];
   }
 
+  /// `POST /api/translate` — batch-translate arbitrary UI strings (Summary
+  /// key points/next steps, Score breakdown notes/evidence quotes) to
+  /// [target]. Index-aligned with [texts]; the backend fails open (returns
+  /// originals) on any translation error, so this never throws for that case.
+  Future<List<String>> translateTexts(List<String> texts, {String target = 'en'}) async {
+    if (texts.isEmpty) return const [];
+    final body = await _client.post(
+      ApiEndpoints.translateTexts,
+      body: {'texts': texts, 'target': target},
+    );
+    final translated = body is Map ? body['texts'] : null;
+    return translated is List
+        ? translated.map((e) => e.toString()).toList()
+        : texts;
+  }
+
   static TranscriptTurn _turnFromJson(Map raw) => TranscriptTurn(
     speaker: (raw['role'] ?? raw['speaker'] ?? '').toString(),
     text: (raw['content'] ?? raw['text'] ?? '').toString(),

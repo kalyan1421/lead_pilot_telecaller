@@ -40,6 +40,7 @@ class _MainShellState extends State<MainShell> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.springWood,
+      resizeToAvoidBottomInset: false,
       body: IndexedStack(index: _tab, children: _screens),
       bottomNavigationBar: _BottomNav(
         currentIndex: _tab,

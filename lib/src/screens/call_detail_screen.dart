@@ -12,6 +12,15 @@ import '../theme/app_theme.dart';
 import '../widgets/leadpilot_widgets.dart';
 import '../widgets/schedule_call_sheet.dart';
 
+/// ISO language codes → display names, shared by every tab's "View English"
+/// banner (Summary/Score/Transcript) so they all describe the source
+/// language the same way.
+const _langNames = {
+  'en': 'English', 'hi': 'Hindi', 'te': 'Telugu', 'ta': 'Tamil',
+  'kn': 'Kannada', 'ml': 'Malayalam', 'mr': 'Marathi', 'bn': 'Bengali',
+  'gu': 'Gujarati', 'pa': 'Punjabi',
+};
+
 /// Passed via `go_router`'s `extra` when navigating here from a known
 /// [CallRecord] (Lead Detail's history list) so this screen doesn't have to
 /// re-fetch the lead's name / this call's date for the header.
@@ -56,6 +65,17 @@ class _CallDetailScreenState extends ConsumerState<CallDetailScreen> {
   bool _translating = false;
   final _searchController = TextEditingController();
   String _query = '';
+
+  // Summary tab's own "View English" toggle — independent of the transcript
+  // one above, since a telecaller may only care about one or the other.
+  bool _showSummaryEnglish = false;
+  Map<String, dynamic>? _translatedAnalysis;
+  bool _summaryTranslating = false;
+
+  // Score tab's own "View English" toggle.
+  bool _showScoreEnglish = false;
+  Map<String, dynamic>? _translatedScore;
+  bool _scoreTranslating = false;
 
   @override
   void initState() {
@@ -110,6 +130,131 @@ class _CallDetailScreenState extends ConsumerState<CallDetailScreen> {
         ..showSnackBar(SnackBar(content: Text('Could not translate: $e')));
     } finally {
       if (mounted) setState(() => _translating = false);
+    }
+  }
+
+  /// Translates the Summary tab's key points + next-step text via the
+  /// batch `/api/translate` endpoint, lazily and cached — same shape as
+  /// [_toggleEnglish] above, just for free-text fields instead of turns.
+  Future<void> _toggleSummaryEnglish(Map<String, dynamic> analysis) async {
+    if (_showSummaryEnglish) {
+      setState(() => _showSummaryEnglish = false);
+      return;
+    }
+    if (_translatedAnalysis != null) {
+      setState(() => _showSummaryEnglish = true);
+      return;
+    }
+    setState(() => _summaryTranslating = true);
+    try {
+      final keyPoints = (analysis['key_points'] is List)
+          ? (analysis['key_points'] as List).map((e) => e.toString()).toList()
+          : <String>[];
+      final nextSteps = (analysis['next_steps'] is List)
+          ? (analysis['next_steps'] as List).whereType<Map>().toList()
+          : <Map>[];
+      final nextStepTexts = [
+        for (final s in nextSteps) (s['text'] ?? s['title'] ?? '').toString(),
+      ];
+      final translated = await ref
+          .read(leadRepositoryProvider)
+          .translateTexts([...keyPoints, ...nextStepTexts]);
+      if (!mounted) return;
+      final translatedKeyPoints = translated.take(keyPoints.length).toList();
+      final translatedNextStepTexts = translated.skip(keyPoints.length).toList();
+      final newAnalysis = Map<String, dynamic>.from(analysis);
+      newAnalysis['key_points'] = translatedKeyPoints;
+      newAnalysis['next_steps'] = [
+        for (var i = 0; i < nextSteps.length; i++)
+          {
+            ...Map<String, dynamic>.from(nextSteps[i]),
+            if (nextSteps[i].containsKey('text')) 'text': translatedNextStepTexts[i],
+            if (nextSteps[i].containsKey('title')) 'title': translatedNextStepTexts[i],
+          },
+      ];
+      setState(() {
+        _translatedAnalysis = newAnalysis;
+        _showSummaryEnglish = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      _toast('Could not translate: $e');
+    } finally {
+      if (mounted) setState(() => _summaryTranslating = false);
+    }
+  }
+
+  /// Translates the Score tab's per-dimension notes, evidence quotes, and
+  /// relevance note. Same lazy-fetch-and-cache shape as the other toggles.
+  Future<void> _toggleScoreEnglish(Map<String, dynamic> rings) async {
+    if (_showScoreEnglish) {
+      setState(() => _showScoreEnglish = false);
+      return;
+    }
+    if (_translatedScore != null) {
+      setState(() => _showScoreEnglish = true);
+      return;
+    }
+    setState(() => _scoreTranslating = true);
+    try {
+      final breakdown = (rings['breakdown'] is List)
+          ? (rings['breakdown'] as List).whereType<Map>().toList()
+          : <Map>[];
+      final relevanceReason = (rings['relevance_reason'] ?? '').toString();
+      final notes = [for (final b in breakdown) (b['note'] ?? '').toString()];
+      final evidenceLists = [
+        for (final b in breakdown)
+          (b['evidence'] is List ? (b['evidence'] as List).whereType<Map>().toList() : <Map>[]),
+      ];
+      final evidenceTexts = [
+        for (final list in evidenceLists)
+          for (final q in list) (q['text'] ?? '').toString(),
+      ];
+      final translated = await ref.read(leadRepositoryProvider).translateTexts([
+        ...notes,
+        if (relevanceReason.isNotEmpty) relevanceReason,
+        ...evidenceTexts,
+      ]);
+      if (!mounted) return;
+
+      var cursor = 0;
+      final translatedNotes = translated.sublist(cursor, cursor + notes.length);
+      cursor += notes.length;
+      String? translatedRelevance;
+      if (relevanceReason.isNotEmpty) {
+        translatedRelevance = translated[cursor];
+        cursor += 1;
+      }
+      final translatedEvidence = translated.sublist(cursor);
+
+      var evIdx = 0;
+      final newBreakdown = [
+        for (var i = 0; i < breakdown.length; i++)
+          {
+            ...Map<String, dynamic>.from(breakdown[i]),
+            'note': translatedNotes[i],
+            'evidence': [
+              for (final q in evidenceLists[i])
+                {
+                  ...Map<String, dynamic>.from(q),
+                  'text': translatedEvidence[evIdx++],
+                },
+            ],
+          },
+      ];
+      setState(() {
+        _translatedScore = {
+          ...Map<String, dynamic>.from(rings),
+          'breakdown': newBreakdown,
+          if (translatedRelevance != null) 'relevance_reason': translatedRelevance,
+        };
+        _showScoreEnglish = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      _toast('Could not translate: $e');
+    } finally {
+      if (mounted) setState(() => _scoreTranslating = false);
     }
   }
 
@@ -188,6 +333,12 @@ class _CallDetailScreenState extends ConsumerState<CallDetailScreen> {
             final activeTurns = _showEnglish && _translated != null
                 ? _translated!
                 : data.transcript.turns;
+            final activeAnalysis = _showSummaryEnglish && _translatedAnalysis != null
+                ? _translatedAnalysis!
+                : data.analysis;
+            final activeScore = _showScoreEnglish && _translatedScore != null
+                ? _translatedScore!
+                : data.score;
             final entityPhrases = _entityPhrases(data.analysis['entities']);
 
             return Column(
@@ -206,12 +357,22 @@ class _CallDetailScreenState extends ConsumerState<CallDetailScreen> {
                     children: [
                       _SummaryTab(
                         leadId: widget.leadId,
-                        analysis: data.analysis,
+                        analysis: activeAnalysis,
                         analysing: data.analysis.isEmpty,
+                        language: data.transcript.language,
+                        showEnglish: _showSummaryEnglish,
+                        translating: _summaryTranslating,
+                        onToggleEnglish: () => _toggleSummaryEnglish(data.analysis),
                         onToast: _toast,
                         onSaveKeyPoints: _saveKeyPoints,
                       ),
-                      _ScoreTab(rings: data.score),
+                      _ScoreTab(
+                        rings: activeScore,
+                        language: data.transcript.language,
+                        showEnglish: _showScoreEnglish,
+                        translating: _scoreTranslating,
+                        onToggleEnglish: () => _toggleScoreEnglish(data.score),
+                      ),
                       _TranscriptTab(
                         leadName: widget.args?.leadName ?? 'Lead',
                         calledAt: widget.args?.calledAt,
@@ -403,6 +564,10 @@ class _SummaryTab extends ConsumerWidget {
     required this.leadId,
     required this.analysis,
     required this.analysing,
+    required this.language,
+    required this.showEnglish,
+    required this.translating,
+    required this.onToggleEnglish,
     required this.onToast,
     required this.onSaveKeyPoints,
   });
@@ -410,6 +575,10 @@ class _SummaryTab extends ConsumerWidget {
   final String leadId;
   final Map<String, dynamic> analysis;
   final bool analysing;
+  final String? language;
+  final bool showEnglish;
+  final bool translating;
+  final VoidCallback onToggleEnglish;
   final void Function(String) onToast;
   final Future<void> Function(List<String>) onSaveKeyPoints;
 
@@ -434,6 +603,9 @@ class _SummaryTab extends ConsumerWidget {
     final nextSteps = (analysis['next_steps'] is List)
         ? (analysis['next_steps'] as List).whereType<Map>().toList()
         : const <Map>[];
+    final langName = language != null ? (_langNames[language] ?? language!) : null;
+    final isNonEnglish = language != null && language != 'en' &&
+        (keyPoints.isNotEmpty || nextSteps.isNotEmpty);
 
     final followUps = ref.watch(followUpsProvider);
     final followUpMatches = followUps.where((f) => f.leadId == leadId);
@@ -442,6 +614,16 @@ class _SummaryTab extends ConsumerWidget {
     return ListView(
       padding: const EdgeInsets.all(AppSpacing.md),
       children: [
+        if (isNonEnglish) ...[
+          _EnglishToggleBanner(
+            langName: langName!,
+            sourceLabel: 'Summary',
+            showEnglish: showEnglish,
+            translating: translating,
+            onToggle: onToggleEnglish,
+          ),
+          const AppGap.md(),
+        ],
         if (keyPoints.isNotEmpty)
           LpCard(
             child: Column(
@@ -776,9 +958,19 @@ class _SkeletonCard extends StatelessWidget {
 // ─── Score tab ──────────────────────────────────────────────────────────────
 
 class _ScoreTab extends StatelessWidget {
-  const _ScoreTab({required this.rings});
+  const _ScoreTab({
+    required this.rings,
+    required this.language,
+    required this.showEnglish,
+    required this.translating,
+    required this.onToggleEnglish,
+  });
 
   final Map<String, dynamic> rings;
+  final String? language;
+  final bool showEnglish;
+  final bool translating;
+  final VoidCallback onToggleEnglish;
 
   @override
   Widget build(BuildContext context) {
@@ -808,10 +1000,24 @@ class _ScoreTab extends StatelessWidget {
     // low lead-quality rather than a "not a qualifying lead" empty-state.
     // `relevance_reason` (if any) is surfaced as a note below the rings.
     final relevanceReason = (rings['relevance_reason'] ?? '').toString();
+    final hasTranslatableText = relevanceReason.trim().isNotEmpty ||
+        breakdown.any((b) => (b['note'] ?? '').toString().trim().isNotEmpty);
+    final langName = language != null ? (_langNames[language] ?? language!) : null;
+    final isNonEnglish = language != null && language != 'en' && hasTranslatableText;
 
     return ListView(
       padding: const EdgeInsets.all(AppSpacing.md),
       children: [
+        if (isNonEnglish) ...[
+          _EnglishToggleBanner(
+            langName: langName!,
+            sourceLabel: 'Score notes',
+            showEnglish: showEnglish,
+            translating: translating,
+            onToggle: onToggleEnglish,
+          ),
+          const AppGap.md(),
+        ],
         if (relevanceReason.trim().isNotEmpty) ...[
           Container(
             padding: const EdgeInsets.all(AppSpacing.sm),
@@ -871,7 +1077,14 @@ class _ScoreTab extends StatelessWidget {
             ],
           ),
         ),
-        if (timeline['segments'] is List && (timeline['segments'] as List).isNotEmpty) ...[
+        // Render the card whenever the backend computed a timeline at all —
+        // including the empty case (no sentiment signal in the call), which
+        // still carries an explanatory caption. Previously this was gated on
+        // segments being non-empty, so a call with no sentiment signal (an
+        // empty sentiment_arc — happens for a handful of real calls) showed
+        // no card and no explanation at all, reading as "broken" rather than
+        // "nothing to show, and here's why."
+        if (timeline.isNotEmpty) ...[
           const AppGap.md(),
           _SentimentTimelineCard(timeline: timeline),
         ],
@@ -1013,7 +1226,9 @@ class _SentimentTimelineCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final segments = (timeline['segments'] as List).whereType<Map>().toList();
+    final segments = timeline['segments'] is List
+        ? (timeline['segments'] as List).whereType<Map>().toList()
+        : const <Map>[];
     final caption = (timeline['caption'] ?? '').toString();
 
     return LpCard(
@@ -1027,61 +1242,125 @@ class _SentimentTimelineCard extends StatelessWidget {
               Text('SENTIMENT TIMELINE', style: AppText.label11),
             ],
           ),
-          const AppGap.sm(),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(AppRadius.xs),
-            child: SizedBox(
-              height: 10,
-              child: Row(
-                children: [
-                  for (final s in segments)
-                    Expanded(
-                      child: Container(
-                        color: _colors[(s['label'] ?? '').toString()] ?? AppColors.tide,
-                      ),
-                    ),
-                ],
-              ),
+          if (segments.isEmpty) ...[
+            const AppGap.sm(),
+            Text(
+              caption.isNotEmpty ? caption : 'No sentiment signal in this call.',
+              style: AppText.caption11.copyWith(color: AppColors.schooner),
             ),
-          ),
-          const AppGap.xs(),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              for (final s in segments)
-                Text(
-                  (s['t0'] ?? _mmss((s['t0_sec'] as num?)?.toInt() ?? 0)).toString(),
-                  style: AppText.caption11.copyWith(color: AppColors.schooner, fontSize: 10),
-                ),
-            ],
-          ),
-          const AppGap.sm(),
-          Wrap(
-            spacing: 12,
-            runSpacing: 4,
-            children: [
-              for (final e in _colors.entries)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
+          ] else ...[
+            const AppGap.sm(),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.xs),
+              child: SizedBox(
+                height: 10,
+                child: Row(
                   children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(color: e.value, shape: BoxShape.circle),
-                    ),
-                    const SizedBox(width: AppSpacing.xxs),
-                    Text(
-                      e.key[0].toUpperCase() + e.key.substring(1),
-                      style: AppText.caption11.copyWith(color: AppColors.schooner),
-                    ),
+                    for (final s in segments)
+                      Expanded(
+                        child: Container(
+                          color: _colors[(s['label'] ?? '').toString()] ?? AppColors.tide,
+                        ),
+                      ),
                   ],
                 ),
-            ],
-          ),
-          if (caption.isNotEmpty) ...[
+              ),
+            ),
             const AppGap.xs(),
-            Text(caption, style: AppText.caption11.copyWith(color: AppColors.schooner)),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                for (final s in segments)
+                  Text(
+                    (s['t0'] ?? _mmss((s['t0_sec'] as num?)?.toInt() ?? 0)).toString(),
+                    style: AppText.caption11.copyWith(color: AppColors.schooner, fontSize: 10),
+                  ),
+              ],
+            ),
+            const AppGap.sm(),
+            Wrap(
+              spacing: 12,
+              runSpacing: 4,
+              children: [
+                for (final e in _colors.entries)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(color: e.value, shape: BoxShape.circle),
+                      ),
+                      const SizedBox(width: AppSpacing.xxs),
+                      Text(
+                        e.key[0].toUpperCase() + e.key.substring(1),
+                        style: AppText.caption11.copyWith(color: AppColors.schooner),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+            if (caption.isNotEmpty) ...[
+              const AppGap.xs(),
+              Text(caption, style: AppText.caption11.copyWith(color: AppColors.schooner)),
+            ],
           ],
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Shared "View English" banner (Summary / Score / Transcript tabs) ──────
+
+class _EnglishToggleBanner extends StatelessWidget {
+  const _EnglishToggleBanner({
+    required this.langName,
+    required this.sourceLabel,
+    required this.showEnglish,
+    required this.translating,
+    required this.onToggle,
+  });
+
+  final String langName;
+
+  /// What was in [langName] — "Transcript", "Call", "Score notes" — so each
+  /// tab's banner reads naturally.
+  final String sourceLabel;
+  final bool showEnglish;
+  final bool translating;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: AppColors.blueRibbon.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.language, size: 16, color: AppColors.blueRibbon),
+          const AppGap.xs(axis: Axis.horizontal),
+          Expanded(
+            child: Text(
+              showEnglish
+                  ? 'Showing English translation.'
+                  : '$sourceLabel is in $langName.',
+              style: AppText.body14,
+            ),
+          ),
+          if (translating)
+            const SizedBox(
+              width: 14, height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            TextButton(
+              onPressed: onToggle,
+              child: Text(showEnglish ? 'View Original' : 'View English'),
+            ),
         ],
       ),
     );
@@ -1117,12 +1396,6 @@ class _TranscriptTab extends StatelessWidget {
   final String query;
   final List<String> highlightPhrases;
 
-  static const _langNames = {
-    'en': 'English', 'hi': 'Hindi', 'te': 'Telugu', 'ta': 'Tamil',
-    'kn': 'Kannada', 'ml': 'Malayalam', 'mr': 'Marathi', 'bn': 'Bengali',
-    'gu': 'Gujarati', 'pa': 'Punjabi',
-  };
-
   @override
   Widget build(BuildContext context) {
     final langName = language != null ? (_langNames[language] ?? language!) : null;
@@ -1153,36 +1426,12 @@ class _TranscriptTab extends StatelessWidget {
         if (isNonEnglish)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
-              decoration: BoxDecoration(
-                color: AppColors.blueRibbon.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(AppRadius.sm),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.language, size: 16, color: AppColors.blueRibbon),
-                  const AppGap.xs(axis: Axis.horizontal),
-                  Expanded(
-                    child: Text(
-                      showEnglish
-                          ? 'Showing English translation.'
-                          : 'Transcript is in $langName.',
-                      style: AppText.body14,
-                    ),
-                  ),
-                  if (translating)
-                    const SizedBox(
-                      width: 14, height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  else
-                    TextButton(
-                      onPressed: onToggleEnglish,
-                      child: Text(showEnglish ? 'View Original' : 'View English'),
-                    ),
-                ],
-              ),
+            child: _EnglishToggleBanner(
+              langName: langName!,
+              sourceLabel: 'Transcript',
+              showEnglish: showEnglish,
+              translating: translating,
+              onToggle: onToggleEnglish,
             ),
           ),
         Padding(

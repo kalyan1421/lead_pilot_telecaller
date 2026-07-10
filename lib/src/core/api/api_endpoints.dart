@@ -68,6 +68,10 @@ class ApiEndpoints {
   static String translate(String callId) =>
       '/api/calls/$callId/transcript/translate';
 
+  // Batch string translation ("View English" on the Summary/Score tabs) —
+  // POST {"texts": [...], "target": "en"} -> {"texts": [...]}, index-aligned.
+  static const String translateTexts = '/api/translate';
+
   // Attendance (clock in/out)
   static const String attendanceCheckIn = '/api/attendance/check-in';
   static const String attendanceCheckOut = '/api/attendance/check-out';

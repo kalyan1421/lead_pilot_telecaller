@@ -15,7 +15,12 @@ import 'api_exception.dart';
 /// timeouts, non-2xx responses) to [ApiException] so callers never depend on
 /// the HTTP library.
 class HttpApiClient implements ApiClient {
-  HttpApiClient({http.Client? client, this.getToken}) : _client = client ?? http.Client();
+  HttpApiClient({
+    http.Client? client,
+    this.getToken,
+    this.onConnectivityOk,
+    this.onConnectivityIssue,
+  }) : _client = client ?? http.Client();
 
   final http.Client _client;
 
@@ -23,6 +28,18 @@ class HttpApiClient implements ApiClient {
   /// on every request (not captured once) so login/logout during the app's
   /// lifetime takes effect immediately — see `session_store.dart`.
   final String? Function()? getToken;
+
+  /// Called whenever a request proves the server is reachable — any HTTP
+  /// response below 500, even a 4xx application error, means the backend is
+  /// up. Drives the global "server unreachable" banner (see
+  /// `serverReachableProvider`).
+  final void Function()? onConnectivityOk;
+
+  /// Called whenever a request fails to reach the server at all (timeout,
+  /// socket error, DNS/transport failure) or the server itself is erroring
+  /// (5xx) — as opposed to a normal 4xx application error, which still
+  /// proves connectivity.
+  final void Function()? onConnectivityIssue;
 
   @override
   Future<dynamic> get(String path, {Map<String, dynamic>? query}) =>
@@ -61,16 +78,27 @@ class HttpApiClient implements ApiClient {
       final streamed = await _client.send(request).timeout(ApiConfig.timeout);
       final response =
           await http.Response.fromStream(streamed).timeout(ApiConfig.timeout);
+      // Any response at all — even a 4xx application error — proves the
+      // server is reachable; only 5xx counts as a server-side connectivity
+      // issue (see _decode).
+      if (response.statusCode < 500) {
+        onConnectivityOk?.call();
+      } else {
+        onConnectivityIssue?.call();
+      }
       return _decode(response, method, path);
     } on TimeoutException catch (e) {
+      onConnectivityIssue?.call();
       throw ApiException('Request timed out: $method $path', cause: e);
     } on SocketException catch (e) {
+      onConnectivityIssue?.call();
       throw ApiException(
         'Network error reaching ${ApiConfig.baseUrl}. Is the backend running '
         'and on the same network? ($method $path)',
         cause: e,
       );
     } on http.ClientException catch (e) {
+      onConnectivityIssue?.call();
       throw ApiException('Transport error: ${e.message}', cause: e);
     }
   }
