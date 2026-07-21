@@ -61,6 +61,8 @@ class LeadOverride {
         checklist: lead.checklist,
         history: lead.history,
         propertyInterest: lead.propertyInterest,
+        nextStep: lead.nextStep,
+        pendingCommitments: lead.pendingCommitments,
       );
 }
 

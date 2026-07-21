@@ -240,10 +240,13 @@ class LeadsController extends Notifier<List<Lead>> {
       ];
       // Persist this lead's confirmed backend call history into the local call
       // log so those calls survive a restart and show in My Calls without the
-      // lead having to stay open. Upsert/merge is handled downstream.
+      // lead having to stay open. Scoped to calls THIS telecaller placed, so
+      // merely opening a lead that carries another user's / imported call never
+      // adds a phantom "call" the user never made. Upsert/merge is downstream.
+      final myId = ref.read(sessionProvider).userId;
       unawaited(ref
           .read(localCallsProvider.notifier)
-          .ingest(callEntriesFromLead(result.lead)));
+          .ingest(callEntriesFromLead(result.lead, currentUserId: myId)));
       // Read back the authoritative kanban stage (server wins) so a move made on
       // the web dashboard is reflected here too. Fail-soft / fire-and-forget.
       final stage = result.stage;
@@ -481,9 +484,18 @@ final callLogProvider = Provider<List<CallLogEntry>>((ref) {
 
 /// Builds persist-able call-log entries from an enriched lead's backend call
 /// history (only calls with a real timestamp).
-List<CallLogEntry> callEntriesFromLead(Lead lead) => [
+///
+/// [currentUserId] scopes which backend calls get written into "My Calls":
+/// only calls this telecaller actually placed (`placedBy == currentUserId`).
+/// This is what stops merely OPENING a lead from adding a phantom call —
+/// another user's, an imported, or an unattributed call is skipped. Calls
+/// recorded on THIS device still enter the log via the recording-found path,
+/// independent of this. Pass null to keep every timestamped call (legacy
+/// behaviour, e.g. when the signed-in user isn't known).
+List<CallLogEntry> callEntriesFromLead(Lead lead, {String? currentUserId}) => [
       for (final c in lead.history)
-        if (c.calledAt != null)
+        if (c.calledAt != null &&
+            (currentUserId == null || c.placedBy == currentUserId))
           CallLogEntry(
             id: c.callId ?? '${lead.id}_${c.calledAt!.millisecondsSinceEpoch}',
             leadName: lead.name,

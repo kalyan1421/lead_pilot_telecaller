@@ -145,6 +145,11 @@ class _LeadDetailScreenState extends ConsumerState<LeadDetailScreen> {
           const AppGap.md(),
           MemoryPanel(lead: lead),
           const AppGap.md(),
+          _NextStepsPanel(
+            lead: lead,
+            onSchedule: () => ScheduleCallSheet.show(context, lead),
+          ),
+          const AppGap.md(),
           CallHistoryPanel(
             leadId: lead.id,
             leadName: lead.name,
@@ -193,20 +198,32 @@ class _LeadDetailScreenState extends ConsumerState<LeadDetailScreen> {
   }
 }
 
-// ─── Lead pipeline strip ─────────────────────────────────────────────────────
+// ─── Lead pipeline (current-stage hero + tap-to-advance) ─────────────────────
 
 class _PipelineStrip extends ConsumerWidget {
   const _PipelineStrip({required this.leadId});
 
   final String leadId;
 
-  static const _stages = LeadStage.values;
+  /// The linear selling progression, in order. Terminal outcomes (Closed Won as
+  /// the win; Closed Lost / Junk as the negatives) are handled separately, not
+  /// counted as numbered steps — so the counter reads "4 / 6", not "4 / 9".
+  static const List<LeadStage> _working = [
+    LeadStage.newLead,
+    LeadStage.assigned,
+    LeadStage.contacted,
+    LeadStage.interested,
+    LeadStage.proposalSent,
+    LeadStage.negotiation,
+  ];
 
-  Future<void> _selectStage(BuildContext context, WidgetRef ref, LeadStage stage) async {
+  int get _total => _working.length;
+
+  Future<void> _applyStage(BuildContext context, WidgetRef ref, LeadStage stage) async {
     final notifier = ref.read(leadStageProvider.notifier);
     if (stage == LeadStage.closedWon) {
       final deal = await showDealClosedSheet(context);
-      if (deal == null) return; // user dismissed without confirming
+      if (deal == null) return; // dismissed without confirming
       await notifier.setStage(
         leadId,
         stage,
@@ -219,115 +236,404 @@ class _PipelineStrip extends ConsumerWidget {
     await notifier.setStage(leadId, stage);
   }
 
+  /// Bottom sheet listing the stages this lead can move to (forward-only): the
+  /// remaining selling stages, then Closed Won, with the terminal negatives
+  /// separated at the bottom. Returns the chosen stage, or null if dismissed.
+  Future<void> _openPicker(BuildContext context, WidgetRef ref, LeadStage current) async {
+    final forward = <LeadStage>[
+      for (final s in _working)
+        if (s.index > current.index) s,
+      if (current != LeadStage.closedWon) LeadStage.closedWon,
+    ];
+    final canLose = !current.isTerminalNegative;
+
+    final picked = await showModalBottomSheet<LeadStage>(
+      context: context,
+      backgroundColor: AppColors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: AppColors.westar,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Text('Move to stage',
+                  style: AppText.display20.copyWith(fontSize: 18)),
+              const SizedBox(height: 2),
+              Text('Currently: ${current.label}',
+                  style: AppText.caption11.copyWith(color: AppColors.schooner)),
+              const AppGap.md(),
+              for (final s in forward)
+                _StageOptionRow(
+                  stage: s,
+                  onTap: () => Navigator.of(ctx).pop(s),
+                ),
+              if (canLose) ...[
+                const AppGap.sm(),
+                const Divider(height: 1),
+                const AppGap.sm(),
+                Text('CLOSE LEAD', style: AppText.label11),
+                const AppGap.xs(),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _NegativeButton(
+                        label: 'Closed Lost',
+                        icon: Icons.cancel_outlined,
+                        onTap: () => Navigator.of(ctx).pop(LeadStage.closedLost),
+                      ),
+                    ),
+                    const AppGap.xs(axis: Axis.horizontal),
+                    Expanded(
+                      child: _NegativeButton(
+                        label: 'Junk',
+                        icon: Icons.block_outlined,
+                        onTap: () => Navigator.of(ctx).pop(LeadStage.junk),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (picked == null || !context.mounted) return;
+    await _applyStage(context, ref, picked);
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final stage = ref.watch(leadStageProvider.select((m) => m[leadId] ?? LeadStage.newLead));
+    final stage =
+        ref.watch(leadStageProvider.select((m) => m[leadId] ?? LeadStage.newLead));
+
+    final isNegative = stage.isTerminalNegative;
+    final isWon = stage == LeadStage.closedWon;
+    final isClosed = isNegative || isWon;
+
+    final workingIndex = _working.indexOf(stage);
+    final step = workingIndex >= 0 ? workingIndex + 1 : _total;
+    final accent = isNegative
+        ? AppColors.alizarin
+        : isWon
+            ? AppColors.salem
+            : AppColors.blueRibbon;
 
     return LpCard(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      padding: EdgeInsets.zero,
+      child: InkWell(
+        // Whole card is the tap target (well above the 44px minimum). Closed
+        // leads are terminal — nothing to advance to — so they're not tappable.
+        onTap: isClosed ? null : () => _openPicker(context, ref, stage),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('PIPELINE STAGE', style: AppText.label11),
+              const AppGap.sm(),
+              Row(
+                children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+                  ),
+                  const AppGap.xs(axis: Axis.horizontal),
+                  Expanded(
+                    child: Text(
+                      stage.label,
+                      style: AppText.body14.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: accent,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ),
+                  if (isWon)
+                    const Icon(Icons.emoji_events, size: 16, color: AppColors.salem)
+                  else if (isNegative)
+                    Text('Closed', style: AppText.caption11.copyWith(color: accent))
+                  else ...[
+                    Text('$step / $_total',
+                        style: AppText.mono(size: 12).copyWith(color: AppColors.schooner)),
+                    const AppGap.xs(axis: Axis.horizontal),
+                    Text('advance',
+                        style: AppText.caption11.copyWith(
+                          color: AppColors.blueRibbon,
+                          fontWeight: FontWeight.w700,
+                        )),
+                    const Icon(Icons.keyboard_arrow_down,
+                        size: 16, color: AppColors.blueRibbon),
+                  ],
+                ],
+              ),
+              const AppGap.sm(),
+              _ProgressSegments(
+                total: _total,
+                filled: isNegative ? _total : step,
+                color: accent,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Segmented progress bar — [filled] of [total] segments in [color], the rest
+/// muted. Reads at a glance without a legend.
+class _ProgressSegments extends StatelessWidget {
+  const _ProgressSegments({
+    required this.total,
+    required this.filled,
+    required this.color,
+  });
+
+  final int total;
+  final int filled;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        for (var i = 0; i < total; i++) ...[
+          Expanded(
+            child: Container(
+              height: 6,
+              decoration: BoxDecoration(
+                color: i < filled ? color : AppColors.westar,
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+          ),
+          if (i < total - 1) const SizedBox(width: 3),
+        ],
+      ],
+    );
+  }
+}
+
+/// A single forward-stage row in the pipeline picker sheet.
+class _StageOptionRow extends StatelessWidget {
+  const _StageOptionRow({required this.stage, required this.onTap});
+
+  final LeadStage stage;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isWin = stage == LeadStage.closedWon;
+    final accent = isWin ? AppColors.salem : AppColors.blueRibbon;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 48),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            Icon(isWin ? Icons.emoji_events_outlined : Icons.radio_button_unchecked,
+                size: 18, color: accent),
+            const AppGap.sm(axis: Axis.horizontal),
+            Expanded(
+              child: Text(
+                stage.label,
+                style: AppText.body14.copyWith(
+                  fontWeight: isWin ? FontWeight.w700 : FontWeight.w500,
+                  color: isWin ? AppColors.salem : AppColors.zeus,
+                ),
+              ),
+            ),
+            if (isWin)
+              Text('deal',
+                  style: AppText.caption11.copyWith(color: AppColors.salem))
+            else
+              const Icon(Icons.chevron_right, size: 18, color: AppColors.tide),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One of the two terminal-negative outcome buttons in the picker sheet.
+class _NegativeButton extends StatelessWidget {
+  const _NegativeButton({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 44),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: AppColors.redSurface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.redBorder),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 16, color: AppColors.alizarin),
+            const SizedBox(width: 6),
+            Text(label,
+                style: AppText.body13.copyWith(
+                  color: AppColors.alizarin,
+                  fontWeight: FontWeight.w700,
+                )),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Next Steps ──────────────────────────────────────────────────────────────
+
+/// AI-recommended next action for this lead (from the memory bubble's
+/// `next_call_strategy`) plus any promises the telecaller still owes the
+/// prospect (`pending_commitments`). Read-only guidance with a quick shortcut
+/// to schedule the follow-up.
+class _NextStepsPanel extends StatelessWidget {
+  const _NextStepsPanel({required this.lead, this.onSchedule});
+
+  final Lead lead;
+  final VoidCallback? onSchedule;
+
+  @override
+  Widget build(BuildContext context) {
+    final step = lead.nextStep.trim();
+    final commitments = lead.pendingCommitments;
+    final hasContent = step.isNotEmpty || commitments.isNotEmpty;
+
+    return SectionPanel(
+      title: 'Next Steps',
+      icon: Icons.flag_outlined,
+      titleColor: AppColors.blueRibbon,
+      color: AppColors.ribbonSurface,
+      borderColor: AppColors.ribbonBorder,
+      trailing: onSchedule == null
+          ? null
+          : InkWell(
+              onTap: onSchedule,
+              borderRadius: BorderRadius.circular(6),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.calendar_today_outlined,
+                        size: 14, color: AppColors.blueRibbon),
+                    const SizedBox(width: 4),
+                    Text('Schedule',
+                        style: AppText.caption11.copyWith(
+                          color: AppColors.blueRibbon,
+                          fontWeight: FontWeight.w700,
+                        )),
+                  ],
+                ),
+              ),
+            ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('PIPELINE STAGE', style: AppText.label11),
-          const AppGap.sm(),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                for (var i = 0; i < _stages.length; i++) ...[
-                  SizedBox(
-                    width: 60,
-                    child: _StageChip(
-                      label: _stages[i].label,
-                      isActive: _stages[i] == stage,
-                      isDead: _stages[i].isTerminalNegative,
-                      // Forward-only: earlier stages are locked so a lead can't
-                      // be tapped back to a stage it has already passed (the
-                      // backend rejects backward moves too). Terminal Closed
-                      // Lost / Junk sit last, so they stay reachable.
-                      onTap: _stages[i].index < stage.index
-                          ? null
-                          : () => _selectStage(context, ref, _stages[i]),
-                    ),
-                  ),
-                  if (i < _stages.length - 1)
-                    Container(
-                      width: 10,
-                      height: 1.5,
-                      color: stage.index > i ? AppColors.blueRibbon : AppColors.westar,
-                    ),
-                ],
-              ],
+          if (!hasContent)
+            Text(
+              'No next steps yet. Make a call to get AI recommendations.',
+              style: AppText.caption11.copyWith(color: AppColors.schooner),
             ),
-          ),
+          if (step.isNotEmpty)
+            _NextStepRow(
+              icon: Icons.bolt,
+              iconColor: AppColors.blueRibbon,
+              label: 'Recommended',
+              text: step,
+            ),
+          if (step.isNotEmpty && commitments.isNotEmpty) const AppGap.sm(),
+          for (var i = 0; i < commitments.length; i++)
+            Padding(
+              padding: EdgeInsets.only(bottom: i == commitments.length - 1 ? 0 : 8),
+              child: _NextStepRow(
+                icon: Icons.check_circle_outline,
+                iconColor: AppColors.tahitiGold,
+                label: 'Owed',
+                text: commitments[i],
+              ),
+            ),
         ],
       ),
     );
   }
 }
 
-class _StageChip extends StatelessWidget {
-  const _StageChip({
+class _NextStepRow extends StatelessWidget {
+  const _NextStepRow({
+    required this.icon,
+    required this.iconColor,
     required this.label,
-    required this.isActive,
-    required this.isDead,
-    required this.onTap,
+    required this.text,
   });
 
+  final IconData icon;
+  final Color iconColor;
   final String label;
-  final bool isActive;
-  final bool isDead;
-  /// Null when this stage is locked (an already-passed stage) — the chip then
-  /// renders dimmed and ignores taps.
-  final VoidCallback? onTap;
+  final String text;
 
   @override
   Widget build(BuildContext context) {
-    final activeColor = isDead ? AppColors.alizarin : AppColors.blueRibbon;
-    final activeSurface = isDead ? AppColors.redSurface : AppColors.ribbonSurface;
-    final locked = onTap == null && !isActive;
-
-    return GestureDetector(
-      onTap: onTap,
-      child: Opacity(
-        opacity: locked ? 0.45 : 1,
-        child: Column(
-        children: [
-          Container(
-            width: 20,
-            height: 20,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: isActive ? activeColor : AppColors.white,
-              border: Border.all(
-                color: isActive ? activeColor : AppColors.westar,
-                width: 1.5,
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 16, color: iconColor),
+        const AppGap(10, axis: Axis.horizontal),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label.toUpperCase(),
+                style: AppText.caption11.copyWith(
+                  color: iconColor,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.4,
+                ),
               ),
-            ),
-            child: isActive
-                ? Icon(Icons.check, size: 11, color: AppColors.white)
-                : null,
+              const SizedBox(height: 1),
+              Text(text, style: AppText.body14),
+            ],
           ),
-          const SizedBox(height: 4),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
-            decoration: BoxDecoration(
-              color: isActive ? activeSurface : Colors.transparent,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              label,
-              style: AppText.label11.copyWith(
-                fontSize: 9,
-                color: isActive ? activeColor : AppColors.schooner,
-                fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ),
-        ],
         ),
-      ),
+      ],
     );
   }
 }

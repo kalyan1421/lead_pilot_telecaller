@@ -13,6 +13,7 @@ abstract final class AppColors {
 
   static const blueRibbon = Color(0xFF1E4AFF);
   static const ribbonSurface = Color(0xFFE8EDFF);
+  static const ribbonBorder = Color(0xFFBFD0FF);
   static const governorBay = Color(0xFF4338CA);
   static const zircon = Color(0xFFEEF2FF);
   static const periwinkle = Color(0xFFC7D2FE);

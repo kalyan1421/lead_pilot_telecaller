@@ -431,6 +431,9 @@ class LeadRepository {
             callId: (c['call_id'] ?? '').toString().isEmpty
                 ? null
                 : c['call_id'].toString(),
+            placedBy: (c['telecaller_id'] ?? '').toString().isEmpty
+                ? null
+                : c['telecaller_id'].toString(),
           ),
     ];
 
@@ -482,6 +485,13 @@ class LeadRepository {
       ],
       history: history,
       propertyInterest: headline.isEmpty ? null : headline,
+      nextStep: strategy,
+      pendingCommitments: memory['pending_commitments'] is List
+          ? (memory['pending_commitments'] as List)
+              .map((e) => e.toString())
+              .where((e) => e.trim().isNotEmpty)
+              .toList()
+          : const [],
     );
   }
 

@@ -33,9 +33,19 @@ class EditLeadSheet extends ConsumerStatefulWidget {
 }
 
 class _EditLeadSheetState extends ConsumerState<EditLeadSheet> {
+  /// Canonical lead statuses — must match the labels [LeadRepository]
+  /// produces from `intent_bucket` (High Intent / Follow-up / Cold / New Lead)
+  /// so a chosen status round-trips instead of being overwritten on refresh.
+  static const List<String> _statusOptions = [
+    'New Lead',
+    'High Intent',
+    'Follow-up',
+    'Cold',
+  ];
+
   late final TextEditingController _name;
   late final TextEditingController _phone;
-  late final TextEditingController _intent;
+  String? _status;
   late LeadSource _source;
   late LeadTemperature _temperature;
   bool _saving = false;
@@ -45,7 +55,11 @@ class _EditLeadSheetState extends ConsumerState<EditLeadSheet> {
     super.initState();
     _name = TextEditingController(text: widget.lead.name);
     _phone = TextEditingController(text: widget.lead.phone);
-    _intent = TextEditingController(text: widget.lead.intent);
+    // Only preselect when the lead's current intent is one of the known
+    // options; an empty/legacy value leaves the dropdown on its hint.
+    _status = _statusOptions.contains(widget.lead.intent)
+        ? widget.lead.intent
+        : null;
     _source = widget.lead.source;
     _temperature = widget.lead.temperature;
   }
@@ -54,7 +68,6 @@ class _EditLeadSheetState extends ConsumerState<EditLeadSheet> {
   void dispose() {
     _name.dispose();
     _phone.dispose();
-    _intent.dispose();
     super.dispose();
   }
 
@@ -71,7 +84,7 @@ class _EditLeadSheetState extends ConsumerState<EditLeadSheet> {
           LeadOverride(
             name: _name.text.trim(),
             phone: _phone.text.trim(),
-            intent: _intent.text.trim(),
+            intent: _status,
             source: _source,
             temperature: _temperature,
           ),
@@ -114,7 +127,13 @@ class _EditLeadSheetState extends ConsumerState<EditLeadSheet> {
               keyboardType: TextInputType.phone,
             ),
             const SizedBox(height: AppSpacing.md),
-            _Field(label: 'Intent', controller: _intent),
+            Text('Status', style: _labelStyle),
+            const SizedBox(height: AppSpacing.xs),
+            _StatusField(
+              value: _status,
+              options: _statusOptions,
+              onChanged: (s) => setState(() => _status = s),
+            ),
             const SizedBox(height: AppSpacing.md),
             Text('Source', style: _labelStyle),
             const SizedBox(height: AppSpacing.xs),
@@ -206,6 +225,48 @@ class _Field extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _StatusField extends StatelessWidget {
+  const _StatusField({
+    required this.value,
+    required this.options,
+    required this.onChanged,
+  });
+
+  final String? value;
+  final List<String> options;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.pampas,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        border: Border.all(color: AppColors.westar),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          isExpanded: true,
+          hint: Text('Select status',
+              style: AppText.body14.copyWith(color: AppColors.schooner)),
+          icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.schooner),
+          style: AppText.body14.copyWith(color: AppColors.zeus),
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          items: [
+            for (final status in options)
+              DropdownMenuItem(value: status, child: Text(status)),
+          ],
+          onChanged: (s) {
+            if (s != null) onChanged(s);
+          },
+        ),
+      ),
     );
   }
 }

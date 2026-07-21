@@ -103,6 +103,8 @@ class Lead {
     required this.checklist,
     required this.history,
     this.propertyInterest,
+    this.nextStep = '',
+    this.pendingCommitments = const [],
   });
 
   final String id;
@@ -122,6 +124,12 @@ class Lead {
   final List<CallRecord> history;
   /// Short topic shown in the lead tile timestamp, e.g. "Luxury Villas Search".
   final String? propertyInterest;
+  /// The AI's one-line recommended next move for this lead, from the memory
+  /// bubble's `next_call_strategy`. Empty when there's no history yet.
+  final String nextStep;
+  /// Promises the telecaller made that aren't fulfilled yet (memory bubble's
+  /// `pending_commitments`) — shown as actionable "Next Steps" items.
+  final List<String> pendingCommitments;
 
   /// Safe placeholder used while the inbox is loading or empty, so providers
   /// that must return a non-null [Lead] never throw on an empty list.
@@ -172,6 +180,10 @@ class Lead {
     checklist: _list(json['checklist'], ChecklistItem.fromJson),
     history: _list(json['history'], CallRecord.fromJson),
     propertyInterest: json['property_interest'] as String?,
+    nextStep: json['next_step'] as String? ?? '',
+    pendingCommitments: (json['pending_commitments'] as List<dynamic>? ?? const [])
+        .map((e) => e.toString())
+        .toList(),
   );
 
   Map<String, dynamic> toJson() => {
@@ -191,6 +203,8 @@ class Lead {
     'checklist': checklist.map((e) => e.toJson()).toList(),
     'history': history.map((e) => e.toJson()).toList(),
     'property_interest': propertyInterest,
+    'next_step': nextStep,
+    'pending_commitments': pendingCommitments,
   };
 }
 
@@ -309,6 +323,7 @@ class CallRecord {
     this.calledAt,
     this.leadId,
     this.callId,
+    this.placedBy,
   });
 
   final String title;
@@ -320,6 +335,10 @@ class CallRecord {
   /// Backend `call_id` for this specific call. Null for a locally-placed call
   /// that hasn't been captured/uploaded yet — those have no stored transcript.
   final String? callId;
+  /// Backend `telecaller_id` of whoever placed/uploaded this call. Used to keep
+  /// only the signed-in telecaller's own calls in "My Calls" — so opening a
+  /// lead that carries another user's (or an imported) call adds nothing.
+  final String? placedBy;
 
   factory CallRecord.fromJson(Map<String, dynamic> json) => CallRecord(
     title: json['title'] as String? ?? '',
@@ -330,6 +349,7 @@ class CallRecord {
         : null,
     leadId: json['lead_id'] as String?,
     callId: json['call_id'] as String?,
+    placedBy: json['telecaller_id'] as String?,
   );
 
   Map<String, dynamic> toJson() => {
@@ -339,6 +359,7 @@ class CallRecord {
     'called_at': calledAt?.toIso8601String(),
     'lead_id': leadId,
     'call_id': callId,
+    'telecaller_id': placedBy,
   };
 }
 
