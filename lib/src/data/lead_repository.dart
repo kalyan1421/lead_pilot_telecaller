@@ -112,6 +112,7 @@ class LeadRepository {
     int? dealValue,
     int? listPrice,
     double? discountPct,
+    String? note,
   }) async {
     await _client.patch(
       ApiEndpoints.leadStage(contactKey),
@@ -120,6 +121,7 @@ class LeadRepository {
         if (dealValue != null) 'deal_value': dealValue,
         if (listPrice != null) 'list_price': listPrice,
         if (discountPct != null) 'discount_pct': discountPct,
+        if (note != null) 'note': note,
       },
     );
   }
@@ -434,6 +436,7 @@ class LeadRepository {
             placedBy: (c['telecaller_id'] ?? '').toString().isEmpty
                 ? null
                 : c['telecaller_id'].toString(),
+            sentiment: c['sentiment'] as String?,
           ),
     ];
 

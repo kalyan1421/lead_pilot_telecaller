@@ -10,6 +10,7 @@ CallLogEntry entry({
   int score = 0,
   Duration duration = Duration.zero,
   DateTime? at,
+  String? sentiment,
 }) =>
     CallLogEntry(
       id: id,
@@ -23,6 +24,7 @@ CallLogEntry entry({
       leadId: leadId,
       callId: callId,
       deviceCallId: deviceCallId,
+      sentiment: sentiment,
     );
 
 void main() {
@@ -93,6 +95,26 @@ void main() {
       final b = entry(id: 'b', deviceCallId: 'dev2', at: DateTime(2026, 7, 15, 10, 31));
       final out = mergeCallEntries([a], [b]);
       expect(out, hasLength(2), reason: 'distinct device ids must never fuse');
+    });
+
+    test('backend sentiment survives fusing with an earlier sentiment-less '
+        'optimistic entry', () {
+      final optimistic = entry(id: 'a', at: DateTime(2026, 7, 15, 10, 30));
+      final confirmed = entry(
+        id: 'b',
+        callId: 'C4',
+        sentiment: 'positive',
+        at: DateTime(2026, 7, 15, 10, 31),
+      );
+      final out = mergeCallEntries([optimistic], [confirmed]);
+      expect(out, hasLength(1));
+      expect(out.single.sentiment, 'positive');
+    });
+
+    test('an existing sentiment is not clobbered by a re-sync with none', () {
+      final existing = [entry(id: 'a', callId: 'C5', sentiment: 'positive')];
+      final out = mergeCallEntries(existing, [entry(id: 'b', callId: 'C5')]);
+      expect(out.single.sentiment, 'positive');
     });
   });
 }

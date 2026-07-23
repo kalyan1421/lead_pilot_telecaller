@@ -121,6 +121,9 @@ CallLogEntry _preferConfirmed(CallLogEntry existing, CallLogEntry incoming) {
   final score = incoming.score > existing.score ? incoming.score : existing.score;
   final duration =
       incoming.duration > existing.duration ? incoming.duration : existing.duration;
+  // Sentiment only ever comes from a backend-analyzed call — a device-log or
+  // optimistic entry never has one, so whichever side has it wins.
+  final sentiment = existing.sentiment ?? incoming.sentiment;
   // Prefer the confirmed timestamp once a call_id is known.
   final calledAt = (existing.callId == null && incoming.callId != null)
       ? incoming.calledAt
@@ -129,6 +132,7 @@ CallLogEntry _preferConfirmed(CallLogEntry existing, CallLogEntry incoming) {
       deviceCallId == existing.deviceCallId &&
       score == existing.score &&
       duration == existing.duration &&
+      sentiment == existing.sentiment &&
       calledAt == existing.calledAt) {
     return existing; // nothing new
   }
@@ -137,6 +141,7 @@ CallLogEntry _preferConfirmed(CallLogEntry existing, CallLogEntry incoming) {
     deviceCallId: deviceCallId,
     score: score,
     duration: duration,
+    sentiment: sentiment,
     calledAt: calledAt,
     leadName: incoming.leadName.isNotEmpty ? incoming.leadName : existing.leadName,
     phone: incoming.phone.isNotEmpty ? incoming.phone : existing.phone,

@@ -86,44 +86,48 @@ class _ScheduleCallSheetState extends ConsumerState<ScheduleCallSheet> {
 
   Future<void> _save() async {
     setState(() => _saving = true);
-    final scheduledAt = DateTime(
-      _date.year, _date.month, _date.day, _time.hour, _time.minute,
-    );
-    final today = DateTime.now();
-    final isToday = scheduledAt.year == today.year &&
-        scheduledAt.month == today.month &&
-        scheduledAt.day == today.day;
-    final isOverdue = scheduledAt.isBefore(today);
-
-    final id = '${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(9999)}';
-    final task = FollowUpTask(
-      id: id,
-      taskText: _noteController.text.trim().isEmpty
-          ? 'Follow-up call with ${widget.lead.name}'
-          : _noteController.text.trim(),
-      leadName: widget.lead.name,
-      phone: widget.lead.phone,
-      leadId: widget.lead.id,
-      status: isOverdue ? FollowUpStatus.overdue : FollowUpStatus.pending,
-      dueLabel: DateFormat('dd MMM · hh:mm a').format(scheduledAt),
-      dueToday: isToday,
-      scheduledAt: scheduledAt,
-      note: _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
-    );
-
-    await ref.read(followUpsProvider.notifier).schedule(task);
-
-    // Schedule a device notification at the chosen time.
-    if (!isOverdue) {
-      await NotificationService.instance.scheduleFollowUp(
-        notifId: id.hashCode.abs() % 100000,
-        title: 'Follow-up: ${widget.lead.name}',
-        body: task.taskText,
-        scheduledAt: scheduledAt,
+    try {
+      final scheduledAt = DateTime(
+        _date.year, _date.month, _date.day, _time.hour, _time.minute,
       );
-    }
+      final today = DateTime.now();
+      final isToday = scheduledAt.year == today.year &&
+          scheduledAt.month == today.month &&
+          scheduledAt.day == today.day;
+      final isOverdue = scheduledAt.isBefore(today);
 
-    if (mounted) Navigator.of(context).pop();
+      final id = '${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(9999)}';
+      final task = FollowUpTask(
+        id: id,
+        taskText: _noteController.text.trim().isEmpty
+            ? 'Follow-up call with ${widget.lead.name}'
+            : _noteController.text.trim(),
+        leadName: widget.lead.name,
+        phone: widget.lead.phone,
+        leadId: widget.lead.id,
+        status: isOverdue ? FollowUpStatus.overdue : FollowUpStatus.pending,
+        dueLabel: DateFormat('dd MMM · hh:mm a').format(scheduledAt),
+        dueToday: isToday,
+        scheduledAt: scheduledAt,
+        note: _noteController.text.trim().isEmpty ? null : _noteController.text.trim(),
+      );
+
+      await ref.read(followUpsProvider.notifier).schedule(task);
+
+      // Schedule a device notification at the chosen time.
+      if (!isOverdue) {
+        await NotificationService.instance.scheduleFollowUp(
+          notifId: id.hashCode.abs() % 100000,
+          title: 'Follow-up: ${widget.lead.name}',
+          body: task.taskText,
+          scheduledAt: scheduledAt,
+        );
+      }
+
+      if (mounted) Navigator.of(context).pop();
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   @override
@@ -202,9 +206,10 @@ class _ScheduleCallSheetState extends ConsumerState<ScheduleCallSheet> {
           SizedBox(
             width: double.infinity,
             child: PrimaryButton(
-              label: _saving ? 'Saving…' : 'Schedule Call',
+              label: 'Schedule Call',
               icon: Icons.calendar_today_outlined,
-              onTap: _saving ? () {} : _save,
+              onTap: _save,
+              loading: _saving,
             ),
           ),
         ],

@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_app_utilities/flutter_app_utilities.dart'
     hide AppRadius, AppSpacing;
 
@@ -327,9 +328,22 @@ class LpMiniPill extends StatelessWidget {
 }
 
 class LeadSummaryCard extends StatelessWidget {
-  const LeadSummaryCard({super.key, required this.lead});
+  const LeadSummaryCard({
+    super.key,
+    required this.lead,
+    this.totalCalls,
+    this.lastContactLabel,
+  });
 
   final Lead lead;
+
+  /// When provided, renders a "N calls · Last contact <label>" line under the
+  /// source/intent pills — folds what used to be separate stat boxes below
+  /// this card into the card itself. Null (the default) keeps this card
+  /// exactly as it renders for other callers (e.g. the pre-call brief) that
+  /// don't pass these.
+  final int? totalCalls;
+  final String? lastContactLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -376,6 +390,34 @@ class LeadSummaryCard extends StatelessWidget {
                     ),
                   ],
                 ),
+                if (totalCalls != null || lastContactLabel != null) ...[
+                  const AppGap.xs(),
+                  Row(
+                    children: [
+                      if (totalCalls != null) ...[
+                        const Icon(Icons.call_outlined, size: 12, color: AppColors.schooner),
+                        const AppGap(4, axis: Axis.horizontal),
+                        Text(
+                          '$totalCalls call${totalCalls == 1 ? '' : 's'}',
+                          style: AppText.caption11.copyWith(color: AppColors.schooner),
+                        ),
+                      ],
+                      if (totalCalls != null && lastContactLabel != null)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: Text('·', style: AppText.caption11.copyWith(color: AppColors.tide)),
+                        ),
+                      if (lastContactLabel != null) ...[
+                        const Icon(Icons.access_time_outlined, size: 12, color: AppColors.schooner),
+                        const AppGap(4, axis: Axis.horizontal),
+                        Text(
+                          'Last contact $lastContactLabel',
+                          style: AppText.caption11.copyWith(color: AppColors.schooner),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
               ],
             ),
           ),
@@ -642,16 +684,22 @@ class SecondaryButton extends StatelessWidget {
     required this.label,
     this.icon,
     required this.onTap,
+    this.loading = false,
   });
 
   final String label;
   final IconData? icon;
   final VoidCallback? onTap;
 
+  /// Shows a spinner in place of the label/icon and disables taps — matches
+  /// [PrimaryButton]'s `loading` prop so secondary actions (e.g. "Save Lead"
+  /// next to a primary "Save & Call") can give the same in-flight feedback.
+  final bool loading;
+
   @override
   Widget build(BuildContext context) {
     return TapScale(
-      onTap: onTap,
+      onTap: loading ? null : onTap,
       child: Container(
         height: 52,
         padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -660,25 +708,36 @@ class SecondaryButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(AppRadius.md),
           border: Border.all(color: AppColors.westar),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (icon != null) ...[
-              Icon(icon, size: 18, color: AppColors.merlin),
-              if (label.isNotEmpty) const AppGap.xs(axis: Axis.horizontal),
-            ],
-            if (label.isNotEmpty)
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppText.body14.copyWith(fontWeight: FontWeight.w600),
+        child: loading
+            ? const Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    valueColor: AlwaysStoppedAnimation(AppColors.merlin),
+                  ),
                 ),
+              )
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (icon != null) ...[
+                    Icon(icon, size: 18, color: AppColors.merlin),
+                    if (label.isNotEmpty) const AppGap.xs(axis: Axis.horizontal),
+                  ],
+                  if (label.isNotEmpty)
+                    Flexible(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppText.body14.copyWith(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                ],
               ),
-          ],
-        ),
       ),
     );
   }
@@ -823,6 +882,81 @@ class LpTextField extends StatelessWidget {
       ),
     );
   }
+}
+
+/// India-only phone input: fixed "+91" prefix, digits-only, capped at 10
+/// digits (a mobile number without the country code). [controller] holds
+/// ONLY the local digits — compose the country code back on save via
+/// `'+91${controller.text}'` (see [localPhoneDigits] for the reverse: pulling
+/// just the local digits back out of an existing stored value).
+class LpPhoneField extends StatelessWidget {
+  const LpPhoneField({
+    super.key,
+    required this.controller,
+    this.enabled = true,
+    this.autofocus = false,
+  });
+
+  final TextEditingController controller;
+  final bool enabled;
+  final bool autofocus;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      enabled: enabled,
+      autofocus: autofocus,
+      keyboardType: TextInputType.phone,
+      inputFormatters: [
+        FilteringTextInputFormatter.digitsOnly,
+        LengthLimitingTextInputFormatter(10),
+      ],
+      style: AppText.body14.copyWith(fontSize: 15, color: AppColors.zeus),
+      decoration: InputDecoration(
+        isDense: true,
+        filled: true,
+        fillColor: AppColors.pampas,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 15),
+        prefixIcon: Padding(
+          padding: const EdgeInsets.only(left: 15, right: 8),
+          child: Center(
+            widthFactor: 1,
+            child: Text(
+              '+91',
+              style: AppText.body14.copyWith(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: AppColors.merlin,
+              ),
+            ),
+          ),
+        ),
+        prefixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: AppColors.westar),
+        ),
+        disabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: AppColors.westar),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: AppColors.tahitiGold),
+        ),
+      ),
+    );
+  }
+}
+
+/// Strips any country code / non-digit characters from a stored phone value,
+/// returning just the last 10 digits — the editable local number for
+/// [LpPhoneField]. E.g. "+919876543210" / "919876543210" / "9876543210" all
+/// become "9876543210".
+String localPhoneDigits(String raw) {
+  final digits = raw.replaceAll(RegExp(r'[^0-9]'), '');
+  return digits.length > 10 ? digits.substring(digits.length - 10) : digits;
 }
 
 /// Full-page error state with an optional retry action — for a fetch that

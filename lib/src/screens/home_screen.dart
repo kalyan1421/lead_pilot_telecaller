@@ -172,12 +172,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   e.calledAt.year == now.year &&
                   e.calledAt.month == now.month &&
                   e.calledAt.day == now.day);
-              // A "good" call by the same score band the rest of the app
-              // already uses for green (ScoreRing/score-color, ≥60 = warm
-              // or better) — the backend doesn't emit a separate per-call
-              // sentiment label the app can read yet, so call score is the
-              // best available proxy for "went well".
-              final positiveToday = callsToday.where((e) => e.score >= 60).length;
+              // Real per-call sentiment from the backend (call_sentiment_label:
+              // the prospect's average turn sentiment, not a score proxy) —
+              // null for a call with no sentiment signal yet (not analyzed, or
+              // a native device-log entry with no backend analysis at all), so
+              // those are correctly excluded rather than miscounted either way.
+              final positiveToday =
+                  callsToday.where((e) => e.sentiment == 'positive').length;
               final followUpsDue = ref
                   .watch(followUpsProvider)
                   .where((t) => t.dueToday && t.status != FollowUpStatus.done)

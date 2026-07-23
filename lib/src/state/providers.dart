@@ -620,6 +620,7 @@ List<CallLogEntry> callEntriesFromLead(Lead lead, {String? currentUserId}) => [
             calledAt: c.calledAt!.toLocal(),
             leadId: lead.id,
             callId: c.callId,
+            sentiment: c.sentiment,
           ),
     ];
 
@@ -816,6 +817,7 @@ class LeadStageController extends Notifier<Map<String, LeadStage>> {
     int? dealValue,
     int? listPrice,
     double? discountPct,
+    String? note,
   }) async {
     // Optimistic local update first (keeps the UI responsive / offline-usable,
     // matching this app's existing fail-soft pattern), then push to the
@@ -833,10 +835,14 @@ class LeadStageController extends Notifier<Map<String, LeadStage>> {
         dealValue: dealValue,
         listPrice: listPrice,
         discountPct: discountPct,
+        note: note,
       );
     } catch (_) {
       // Fail soft: local state already reflects the move; the next successful
       // sync (or a future outbox/retry mechanism) will reconcile the backend.
+      // NOTE: for a backward move this means the backend may never see the
+      // required note if this request fails — same fail-soft trade-off the
+      // app already accepts for every other stage move, not a new gap.
     }
   }
 

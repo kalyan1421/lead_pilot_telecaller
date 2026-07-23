@@ -410,13 +410,14 @@ class _AddOutboundLeadScreenState extends ConsumerState<AddOutboundLeadScreen> {
                     children: [
                       SecondaryButton(
                         label: 'Cancel',
-                        onTap: () => context.pop(),
+                        onTap: _saving ? null : () => context.pop(),
                       ),
                       const AppGap.sm(axis: Axis.horizontal),
                       Expanded(
                         child: SecondaryButton(
-                          label: _saving ? 'Saving…' : 'Save Lead',
-                          onTap: _saving ? null : _saveLead,
+                          label: 'Save Lead',
+                          onTap: _saveLead,
+                          loading: _saving,
                         ),
                       ),
                       const AppGap.sm(axis: Axis.horizontal),
@@ -425,7 +426,8 @@ class _AddOutboundLeadScreenState extends ConsumerState<AddOutboundLeadScreen> {
                           label: 'Save & Call',
                           icon: Icons.phone_outlined,
                           color: AppColors.greenHaze,
-                          onTap: _saving ? null : _saveAndCall,
+                          onTap: _saveAndCall,
+                          loading: _saving,
                         ),
                       ),
                     ],

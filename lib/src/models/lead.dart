@@ -324,6 +324,7 @@ class CallRecord {
     this.leadId,
     this.callId,
     this.placedBy,
+    this.sentiment,
   });
 
   final String title;
@@ -339,6 +340,11 @@ class CallRecord {
   /// only the signed-in telecaller's own calls in "My Calls" — so opening a
   /// lead that carries another user's (or an imported) call adds nothing.
   final String? placedBy;
+  /// Real per-call sentiment — "positive" | "neutral" | "negative", or null
+  /// when the call has no sentiment signal yet (not analyzed, or analysis
+  /// failed). Backed by the backend's `call_sentiment_label()`, not a score
+  /// threshold — see the "Positive Calls" stat on the inbox screen.
+  final String? sentiment;
 
   factory CallRecord.fromJson(Map<String, dynamic> json) => CallRecord(
     title: json['title'] as String? ?? '',
@@ -350,6 +356,7 @@ class CallRecord {
     leadId: json['lead_id'] as String?,
     callId: json['call_id'] as String?,
     placedBy: json['telecaller_id'] as String?,
+    sentiment: json['sentiment'] as String?,
   );
 
   Map<String, dynamic> toJson() => {
@@ -360,6 +367,7 @@ class CallRecord {
     'lead_id': leadId,
     'call_id': callId,
     'telecaller_id': placedBy,
+    'sentiment': sentiment,
   };
 }
 
@@ -486,6 +494,7 @@ class CallLogEntry {
     this.leadId,
     this.callId,
     this.deviceCallId,
+    this.sentiment,
   });
 
   final String id;
@@ -508,6 +517,10 @@ class CallLogEntry {
   /// dedup/sync identity for those entries (a call placed through the app's
   /// own dialer has no device id until the OS call log catches up with it).
   final String? deviceCallId;
+  /// Real per-call sentiment — "positive" | "neutral" | "negative", or null
+  /// when there's no sentiment signal yet (not analyzed — including every
+  /// device-call-log/native entry, which never has backend analysis at all).
+  final String? sentiment;
 
   CallLogEntry copyWith({
     Duration? duration,
@@ -520,6 +533,7 @@ class CallLogEntry {
     LeadSource? source,
     bool? isInbound,
     String? deviceCallId,
+    String? sentiment,
   }) => CallLogEntry(
     id: id,
     leadName: leadName ?? this.leadName,
@@ -533,6 +547,7 @@ class CallLogEntry {
     leadId: leadId,
     callId: callId ?? this.callId,
     deviceCallId: deviceCallId ?? this.deviceCallId,
+    sentiment: sentiment ?? this.sentiment,
   );
 
   factory CallLogEntry.fromJson(Map<String, dynamic> json) => CallLogEntry(
@@ -548,6 +563,7 @@ class CallLogEntry {
     leadId: json['lead_id'] as String?,
     callId: json['call_id'] as String?,
     deviceCallId: json['device_call_id'] as String?,
+    sentiment: json['sentiment'] as String?,
   );
 
   Map<String, dynamic> toJson() => {
@@ -563,6 +579,7 @@ class CallLogEntry {
     'lead_id': leadId,
     'call_id': callId,
     'device_call_id': deviceCallId,
+    'sentiment': sentiment,
   };
 }
 

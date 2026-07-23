@@ -24,6 +24,17 @@ class HttpApiClient implements ApiClient {
 
   final http.Client _client;
 
+  /// The only endpoints this backend accepts with no bearer token. Every
+  /// other route requires `Depends(get_current_user)` — so any other request
+  /// fired while logged out would just round-trip to a 401 "missing token"
+  /// anyway. This is why: right after logout, [SessionController.logout]
+  /// clears the token, then its caller invalidates ~10 providers whose
+  /// `build()`/`_load()` unconditionally re-fetch from the backend — those
+  /// fetches used to fire with no token and surface as a scary raw 401. Now
+  /// they fail fast, locally, with no network round-trip, and are caught by
+  /// the same fail-soft try/catch every controller already has.
+  static const _publicPaths = {'/api/auth/login', '/api/auth/register'};
+
   /// Returns the current session's JWT, or null when logged out. Read fresh
   /// on every request (not captured once) so login/logout during the app's
   /// lifetime takes effect immediately — see `session_store.dart`.
@@ -67,10 +78,17 @@ class HttpApiClient implements ApiClient {
     Object? body,
     Map<String, dynamic>? query,
   }) async {
+    final token = getToken?.call();
+    if (token == null && !_publicPaths.contains(path)) {
+      // Fail fast, no network call — this path needs auth and there's no
+      // token right now (logged out, or a stale fetch racing a fresh
+      // logout). Same ApiException type every caller's fail-soft catch
+      // already handles, just without the pointless round-trip to a 401.
+      throw const ApiException('Not signed in', statusCode: 401);
+    }
     final uri = ApiConfig.uri(path, query: query);
     final request = http.Request(method, uri)
       ..headers.addAll(ApiConfig.defaultHeaders);
-    final token = getToken?.call();
     if (token != null) request.headers['Authorization'] = 'Bearer $token';
     if (body != null) request.body = jsonEncode(body);
 

@@ -111,44 +111,14 @@ class _LeadDetailScreenState extends ConsumerState<LeadDetailScreen> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
         children: [
-          LeadSummaryCard(lead: lead),
+          LeadSummaryCard(
+            lead: lead,
+            totalCalls:
+                mergedHistory.length > lead.totalCalls ? mergedHistory.length : lead.totalCalls,
+            lastContactLabel: _relativeDay(lead.lastContact),
+          ),
           const AppGap.md(),
           _PipelineStrip(leadId: lead.id),
-          const AppGap.md(),
-          Row(
-            children: [
-              Expanded(
-                child: MetricTile(
-                  label: 'Total Calls',
-                  value: '${mergedHistory.length > lead.totalCalls ? mergedHistory.length : lead.totalCalls}',
-                  mono: true,
-                ),
-              ),
-              const AppGap.xs(axis: Axis.horizontal),
-              Expanded(
-                child: MetricTile(
-                  label: 'Avg Score',
-                  value: '${lead.averageScore}',
-                  valueColor: AppColors.salem,
-                  mono: true,
-                ),
-              ),
-              const AppGap.xs(axis: Axis.horizontal),
-              Expanded(
-                child: MetricTile(
-                  label: 'Last Contact',
-                  value: _relativeDay(lead.lastContact),
-                ),
-              ),
-            ],
-          ),
-          const AppGap.md(),
-          MemoryPanel(lead: lead),
-          const AppGap.md(),
-          _NextStepsPanel(
-            lead: lead,
-            onSchedule: () => ScheduleCallSheet.show(context, lead),
-          ),
           const AppGap.md(),
           CallHistoryPanel(
             leadId: lead.id,
@@ -156,6 +126,13 @@ class _LeadDetailScreenState extends ConsumerState<LeadDetailScreen> {
             history: mergedHistory,
             onUploadRecording: () =>
                 UploadRecordingSheet.show(context, lead),
+          ),
+          const AppGap.md(),
+          MemoryPanel(lead: lead),
+          const AppGap.md(),
+          _NextStepsPanel(
+            lead: lead,
+            onSchedule: () => ScheduleCallSheet.show(context, lead),
           ),
         ],
       ),
@@ -200,7 +177,7 @@ class _LeadDetailScreenState extends ConsumerState<LeadDetailScreen> {
 
 // ─── Lead pipeline (current-stage hero + tap-to-advance) ─────────────────────
 
-class _PipelineStrip extends ConsumerWidget {
+class _PipelineStrip extends ConsumerStatefulWidget {
   const _PipelineStrip({required this.leadId});
 
   final String leadId;
@@ -217,117 +194,93 @@ class _PipelineStrip extends ConsumerWidget {
     LeadStage.negotiation,
   ];
 
-  int get _total => _working.length;
+  @override
+  ConsumerState<_PipelineStrip> createState() => _PipelineStripState();
+}
 
-  Future<void> _applyStage(BuildContext context, WidgetRef ref, LeadStage stage) async {
+class _PipelineStripState extends ConsumerState<_PipelineStrip> {
+  /// True while a stage change is being pushed to the backend — swaps the
+  /// "advance" row for a spinner and disables the card, mirroring
+  /// MemoryPanel's rebuild-spinner idiom elsewhere on this screen.
+  bool _applying = false;
+
+  int get _total => _PipelineStrip._working.length;
+
+  Future<void> _applyStage(LeadStage stage, {String? note}) async {
     final notifier = ref.read(leadStageProvider.notifier);
     if (stage == LeadStage.closedWon) {
       final deal = await showDealClosedSheet(context);
       if (deal == null) return; // dismissed without confirming
-      await notifier.setStage(
-        leadId,
-        stage,
-        dealValue: deal.dealValue,
-        listPrice: deal.listPrice,
-        discountPct: deal.discountPct,
-      );
+      if (!mounted) return;
+      setState(() => _applying = true);
+      try {
+        await notifier.setStage(
+          widget.leadId,
+          stage,
+          dealValue: deal.dealValue,
+          listPrice: deal.listPrice,
+          discountPct: deal.discountPct,
+          note: note,
+        );
+      } finally {
+        if (mounted) setState(() => _applying = false);
+      }
       return;
     }
-    await notifier.setStage(leadId, stage);
+    setState(() => _applying = true);
+    try {
+      await notifier.setStage(widget.leadId, stage, note: note);
+    } finally {
+      if (mounted) setState(() => _applying = false);
+    }
   }
 
-  /// Bottom sheet listing the stages this lead can move to (forward-only): the
-  /// remaining selling stages, then Closed Won, with the terminal negatives
-  /// separated at the bottom. Returns the chosen stage, or null if dismissed.
-  Future<void> _openPicker(BuildContext context, WidgetRef ref, LeadStage current) async {
+  /// Bottom sheet listing every stage this lead can move to: the remaining
+  /// forward selling stages + Closed Won, the terminal negatives, and —
+  /// separated below a divider — a "move back" section for reopening a lead
+  /// or correcting a wrong stage. Picking a backward stage requires a note
+  /// (collected in a second step of the same sheet) before it's applied.
+  Future<void> _openPicker(LeadStage current) async {
     final forward = <LeadStage>[
-      for (final s in _working)
+      for (final s in _PipelineStrip._working)
         if (s.index > current.index) s,
       if (current != LeadStage.closedWon) LeadStage.closedWon,
     ];
+    final backward = <LeadStage>[
+      for (final s in _PipelineStrip._working)
+        if (s.index < current.index) s,
+    ];
     final canLose = !current.isTerminalNegative;
 
-    final picked = await showModalBottomSheet<LeadStage>(
+    final result = await showModalBottomSheet<_StagePickerResult>(
       context: context,
       backgroundColor: AppColors.white,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 16),
-                  decoration: BoxDecoration(
-                    color: AppColors.westar,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              Text('Move to stage',
-                  style: AppText.display20.copyWith(fontSize: 18)),
-              const SizedBox(height: 2),
-              Text('Currently: ${current.label}',
-                  style: AppText.caption11.copyWith(color: AppColors.schooner)),
-              const AppGap.md(),
-              for (final s in forward)
-                _StageOptionRow(
-                  stage: s,
-                  onTap: () => Navigator.of(ctx).pop(s),
-                ),
-              if (canLose) ...[
-                const AppGap.sm(),
-                const Divider(height: 1),
-                const AppGap.sm(),
-                Text('CLOSE LEAD', style: AppText.label11),
-                const AppGap.xs(),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _NegativeButton(
-                        label: 'Closed Lost',
-                        icon: Icons.cancel_outlined,
-                        onTap: () => Navigator.of(ctx).pop(LeadStage.closedLost),
-                      ),
-                    ),
-                    const AppGap.xs(axis: Axis.horizontal),
-                    Expanded(
-                      child: _NegativeButton(
-                        label: 'Junk',
-                        icon: Icons.block_outlined,
-                        onTap: () => Navigator.of(ctx).pop(LeadStage.junk),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ],
-          ),
-        ),
+      builder: (_) => _StagePickerSheet(
+        current: current,
+        forward: forward,
+        backward: backward,
+        canLose: canLose,
       ),
     );
 
-    if (picked == null || !context.mounted) return;
-    await _applyStage(context, ref, picked);
+    if (result == null || !mounted) return;
+    await _applyStage(result.stage, note: result.note);
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final stage =
-        ref.watch(leadStageProvider.select((m) => m[leadId] ?? LeadStage.newLead));
+  Widget build(BuildContext context) {
+    final stage = ref.watch(
+      leadStageProvider.select((m) => m[widget.leadId] ?? LeadStage.newLead),
+    );
 
     final isNegative = stage.isTerminalNegative;
     final isWon = stage == LeadStage.closedWon;
-    final isClosed = isNegative || isWon;
 
-    final workingIndex = _working.indexOf(stage);
+    final workingIndex = _PipelineStrip._working.indexOf(stage);
     final step = workingIndex >= 0 ? workingIndex + 1 : _total;
     final accent = isNegative
         ? AppColors.alizarin
@@ -339,8 +292,9 @@ class _PipelineStrip extends ConsumerWidget {
       padding: EdgeInsets.zero,
       child: InkWell(
         // Whole card is the tap target (well above the 44px minimum). Closed
-        // leads are terminal — nothing to advance to — so they're not tappable.
-        onTap: isClosed ? null : () => _openPicker(context, ref, stage),
+        // leads can still reopen (via the "move back" section), so only an
+        // in-flight change disables the card — never the closed state itself.
+        onTap: _applying ? null : () => _openPicker(stage),
         borderRadius: BorderRadius.circular(12),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
@@ -367,11 +321,25 @@ class _PipelineStrip extends ConsumerWidget {
                       ),
                     ),
                   ),
-                  if (isWon)
+                  if (_applying)
+                    const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else if (isWon)
                     const Icon(Icons.emoji_events, size: 16, color: AppColors.salem)
-                  else if (isNegative)
-                    Text('Closed', style: AppText.caption11.copyWith(color: accent))
-                  else ...[
+                  else if (isNegative) ...[
+                    Text('Closed', style: AppText.caption11.copyWith(color: accent)),
+                    const AppGap.xs(axis: Axis.horizontal),
+                    Text('reopen',
+                        style: AppText.caption11.copyWith(
+                          color: AppColors.blueRibbon,
+                          fontWeight: FontWeight.w700,
+                        )),
+                    const Icon(Icons.keyboard_arrow_down,
+                        size: 16, color: AppColors.blueRibbon),
+                  ] else ...[
                     Text('$step / $_total',
                         style: AppText.mono(size: 12).copyWith(color: AppColors.schooner)),
                     const AppGap.xs(axis: Axis.horizontal),
@@ -396,6 +364,198 @@ class _PipelineStrip extends ConsumerWidget {
         ),
       ),
     );
+  }
+}
+
+/// Picker sheet result — [note] is only ever non-null for a backward move
+/// (see [_StagePickerSheet]'s note-required step).
+class _StagePickerResult {
+  const _StagePickerResult(this.stage, {this.note});
+  final LeadStage stage;
+  final String? note;
+}
+
+/// Two-step bottom sheet: a list of reachable stages (forward + terminal
+/// negatives + a "move back" section), then — only when a backward stage is
+/// picked — a required note before the move is confirmed.
+class _StagePickerSheet extends StatefulWidget {
+  const _StagePickerSheet({
+    required this.current,
+    required this.forward,
+    required this.backward,
+    required this.canLose,
+  });
+
+  final LeadStage current;
+  final List<LeadStage> forward;
+  final List<LeadStage> backward;
+  final bool canLose;
+
+  @override
+  State<_StagePickerSheet> createState() => _StagePickerSheetState();
+}
+
+class _StagePickerSheetState extends State<_StagePickerSheet> {
+  LeadStage? _pendingBackward;
+  final _noteController = TextEditingController();
+
+  @override
+  void dispose() {
+    _noteController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = _pendingBackward;
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          16, 12, 16, 20 + MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: pending == null ? _buildList() : _buildNoteStep(pending),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildList() {
+    return [
+      Center(
+        child: Container(
+          width: 36,
+          height: 4,
+          margin: const EdgeInsets.only(bottom: 16),
+          decoration: BoxDecoration(
+            color: AppColors.westar,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+      ),
+      Text('Move to stage', style: AppText.display20.copyWith(fontSize: 18)),
+      const SizedBox(height: 2),
+      Text('Currently: ${widget.current.label}',
+          style: AppText.caption11.copyWith(color: AppColors.schooner)),
+      const AppGap.md(),
+      for (final s in widget.forward)
+        _StageOptionRow(
+          stage: s,
+          onTap: () => Navigator.of(context).pop(_StagePickerResult(s)),
+        ),
+      if (widget.canLose) ...[
+        const AppGap.sm(),
+        const Divider(height: 1),
+        const AppGap.sm(),
+        Text('CLOSE LEAD', style: AppText.label11),
+        const AppGap.xs(),
+        Row(
+          children: [
+            Expanded(
+              child: _NegativeButton(
+                label: 'Closed Lost',
+                icon: Icons.cancel_outlined,
+                onTap: () => Navigator.of(context)
+                    .pop(_StagePickerResult(LeadStage.closedLost)),
+              ),
+            ),
+            const AppGap.xs(axis: Axis.horizontal),
+            Expanded(
+              child: _NegativeButton(
+                label: 'Junk',
+                icon: Icons.block_outlined,
+                onTap: () =>
+                    Navigator.of(context).pop(_StagePickerResult(LeadStage.junk)),
+              ),
+            ),
+          ],
+        ),
+      ],
+      if (widget.backward.isNotEmpty) ...[
+        const AppGap.sm(),
+        const Divider(height: 1),
+        const AppGap.sm(),
+        Text('MOVE BACK / REOPEN', style: AppText.label11),
+        const SizedBox(height: 2),
+        Text('Requires a note explaining why — it gets saved with the change.',
+            style: AppText.caption11.copyWith(color: AppColors.schooner)),
+        const AppGap.xs(),
+        for (final s in widget.backward)
+          _StageOptionRow(
+            stage: s,
+            muted: true,
+            onTap: () => setState(() => _pendingBackward = s),
+          ),
+      ],
+    ];
+  }
+
+  List<Widget> _buildNoteStep(LeadStage stage) {
+    final note = _noteController.text.trim();
+    return [
+      Row(
+        children: [
+          InkWell(
+            onTap: () => setState(() => _pendingBackward = null),
+            borderRadius: BorderRadius.circular(20),
+            child: const Padding(
+              padding: EdgeInsets.all(4),
+              child: Icon(Icons.arrow_back, size: 20, color: AppColors.merlin),
+            ),
+          ),
+          const AppGap.sm(axis: Axis.horizontal),
+          Expanded(
+            child: Text('Move back to ${stage.label}',
+                style: AppText.display20.copyWith(fontSize: 18)),
+          ),
+        ],
+      ),
+      const AppGap.xs(),
+      Text(
+        'Moving a lead backward needs a reason on record.',
+        style: AppText.caption11.copyWith(color: AppColors.schooner),
+      ),
+      const AppGap.md(),
+      TextField(
+        controller: _noteController,
+        autofocus: true,
+        maxLines: 3,
+        onChanged: (_) => setState(() {}),
+        decoration: InputDecoration(
+          hintText: 'Why is this lead moving back? (required)',
+          hintStyle: AppText.body13.copyWith(color: AppColors.tide),
+          filled: true,
+          fillColor: AppColors.pampas,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: AppColors.westar),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: AppColors.westar),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: AppColors.tahitiGold),
+          ),
+          contentPadding: const EdgeInsets.all(12),
+        ),
+      ),
+      const AppGap.lg(),
+      SizedBox(
+        width: double.infinity,
+        child: PrimaryButton(
+          label: 'Confirm move',
+          icon: Icons.check,
+          onTap: note.isEmpty
+              ? null
+              : () => Navigator.of(context)
+                  .pop(_StagePickerResult(stage, note: note)),
+        ),
+      ),
+    ];
   }
 }
 
@@ -435,15 +595,26 @@ class _ProgressSegments extends StatelessWidget {
 
 /// A single forward-stage row in the pipeline picker sheet.
 class _StageOptionRow extends StatelessWidget {
-  const _StageOptionRow({required this.stage, required this.onTap});
+  const _StageOptionRow({
+    required this.stage,
+    required this.onTap,
+    this.muted = false,
+  });
 
   final LeadStage stage;
   final VoidCallback onTap;
 
+  /// True for a "move back" option — uses a distinct amber accent instead of
+  /// the forward-move blue, so backward options never read as a normal
+  /// advance at a glance.
+  final bool muted;
+
   @override
   Widget build(BuildContext context) {
     final isWin = stage == LeadStage.closedWon;
-    final accent = isWin ? AppColors.salem : AppColors.blueRibbon;
+    final accent = isWin
+        ? AppColors.salem
+        : (muted ? AppColors.tahitiGold : AppColors.blueRibbon);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
@@ -452,8 +623,13 @@ class _StageOptionRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           children: [
-            Icon(isWin ? Icons.emoji_events_outlined : Icons.radio_button_unchecked,
-                size: 18, color: accent),
+            Icon(
+              isWin
+                  ? Icons.emoji_events_outlined
+                  : (muted ? Icons.undo : Icons.radio_button_unchecked),
+              size: 18,
+              color: accent,
+            ),
             const AppGap.sm(axis: Axis.horizontal),
             Expanded(
               child: Text(
@@ -468,7 +644,8 @@ class _StageOptionRow extends StatelessWidget {
               Text('deal',
                   style: AppText.caption11.copyWith(color: AppColors.salem))
             else
-              const Icon(Icons.chevron_right, size: 18, color: AppColors.tide),
+              Icon(Icons.chevron_right, size: 18,
+                  color: muted ? AppColors.tahitiGold : AppColors.tide),
           ],
         ),
       ),

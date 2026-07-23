@@ -54,7 +54,7 @@ class _EditLeadSheetState extends ConsumerState<EditLeadSheet> {
   void initState() {
     super.initState();
     _name = TextEditingController(text: widget.lead.name);
-    _phone = TextEditingController(text: widget.lead.phone);
+    _phone = TextEditingController(text: localPhoneDigits(widget.lead.phone));
     // Only preselect when the lead's current intent is one of the known
     // options; an empty/legacy value leaves the dropdown on its hint.
     _status = _statusOptions.contains(widget.lead.intent)
@@ -78,18 +78,31 @@ class _EditLeadSheetState extends ConsumerState<EditLeadSheet> {
         ..showSnackBar(const SnackBar(content: Text('Name is required')));
       return;
     }
+    final localDigits = _phone.text.trim();
+    if (localDigits.length != 10) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(const SnackBar(
+          content: Text('Enter a valid 10-digit phone number'),
+        ));
+      return;
+    }
     setState(() => _saving = true);
-    await ref.read(leadsProvider.notifier).updateLead(
-          widget.lead.id,
-          LeadOverride(
-            name: _name.text.trim(),
-            phone: _phone.text.trim(),
-            intent: _status,
-            source: _source,
-            temperature: _temperature,
-          ),
-        );
-    if (mounted) Navigator.of(context).pop();
+    try {
+      await ref.read(leadsProvider.notifier).updateLead(
+            widget.lead.id,
+            LeadOverride(
+              name: _name.text.trim(),
+              phone: '+91$localDigits',
+              intent: _status,
+              source: _source,
+              temperature: _temperature,
+            ),
+          );
+      if (mounted) Navigator.of(context).pop();
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   @override
@@ -121,11 +134,9 @@ class _EditLeadSheetState extends ConsumerState<EditLeadSheet> {
             const SizedBox(height: AppSpacing.md),
             _Field(label: 'Name', controller: _name),
             const SizedBox(height: AppSpacing.md),
-            _Field(
-              label: 'Phone',
-              controller: _phone,
-              keyboardType: TextInputType.phone,
-            ),
+            Text('Phone', style: _labelStyle),
+            const SizedBox(height: AppSpacing.xs),
+            LpPhoneField(controller: _phone, enabled: !_saving),
             const SizedBox(height: AppSpacing.md),
             Text('Status', style: _labelStyle),
             const SizedBox(height: AppSpacing.xs),
@@ -163,9 +174,10 @@ class _EditLeadSheetState extends ConsumerState<EditLeadSheet> {
             SizedBox(
               width: double.infinity,
               child: PrimaryButton(
-                label: _saving ? 'Saving…' : 'Save changes',
+                label: 'Save changes',
                 icon: Icons.check,
-                onTap: _saving ? () {} : _save,
+                onTap: _save,
+                loading: _saving,
               ),
             ),
           ],
@@ -184,12 +196,10 @@ class _Field extends StatelessWidget {
   const _Field({
     required this.label,
     required this.controller,
-    this.keyboardType,
   });
 
   final String label;
   final TextEditingController controller;
-  final TextInputType? keyboardType;
 
   @override
   Widget build(BuildContext context) {
@@ -206,7 +216,6 @@ class _Field extends StatelessWidget {
         const SizedBox(height: AppSpacing.xs),
         TextField(
           controller: controller,
-          keyboardType: keyboardType,
           style: AppText.body14.copyWith(fontSize: 15, color: AppColors.zeus),
           decoration: InputDecoration(
             isDense: true,
